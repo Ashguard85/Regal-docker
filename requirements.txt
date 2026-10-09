@@ -1,0 +1,5 @@
+Flask>=3.1,<4
+Gunicorn>=23,<24
+requests>=2.32,<3
+beautifulsoup4>=4.13,<5
+openai>=2.0,<3

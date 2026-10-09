@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#16352a">
+  <meta name="referrer" content="no-referrer">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Brettspiele">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
+  <title>Brettspielregal</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <div>
+          <p class="eyebrow">Meine Sammlung</p>
+          <h1 id="appTitle">Brettspielregal</h1>
+        </div>
+      </div>
+      <span id="modeBadge" class="mode-badge">…</span>
+    </header>
+
+    <main id="mainContent" class="content" tabindex="-1">
+      <section id="viewCollection" class="view active" aria-labelledby="collectionHeading">
+        <div class="collection-hero">
+          <div class="collection-copy">
+            <p class="hero-kicker">Dein persönliches Spieleregal</p>
+            <div class="section-head">
+              <div><h2 id="collectionHeading">Brettspiele</h2><p id="collectionCount" class="muted">0 Spiele</p></div>
+              <button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button>
+            </div>
+            <p class="hero-text">Schnell finden, was du besitzt – inklusive Regeln, Cover und wichtigen Spieldaten.</p>
+          </div>
+        </div>
+        <label class="search-box"><span class="sr-only">Sammlung durchsuchen</span><span class="search-icon" aria-hidden="true"></span><input id="searchInput" type="search" placeholder="Titel, Verlag, Autor oder Tag suchen …" autocomplete="off"></label>
+        <div class="collection-toolbar" aria-label="Ansicht wählen">
+          <div class="view-toggle" role="tablist" aria-label="Sammlungsansicht">
+            <button id="viewListButton" class="view-pill active" type="button" role="tab" aria-selected="true">Liste</button>
+            <button id="viewShelfButton" class="view-pill" type="button" role="tab" aria-selected="false">Regal</button>
+          </div>
+          <p class="collection-subhint">Mit Covers wirkt deine Sammlung wie ein echtes kleines Regal.</p>
+        </div>
+        <div id="statusBanner" class="status-banner hidden" role="status"></div>
+        <div id="gameList" class="game-list"></div>
+        <div id="emptyState" class="empty-state hidden">
+          <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
+          <strong>Noch keine Brettspiele</strong>
+          <p>Lege dein erstes Spiel an oder übernimm Daten bequem aus einem externen Link.</p>
+          <button id="emptyAddButton" class="button primary">Erstes Spiel erfassen</button>
+        </div>
+      </section>
+
+      <section id="viewSetup" class="view" aria-labelledby="setupHeading">
+        <div class="section-head"><div><h2 id="setupHeading">Setup & Daten</h2><p class="muted">Betriebsmodus, Verbindung und Backups</p></div></div>
+
+        <details open><summary>Betriebsmodus</summary><div class="details-body">
+          <div id="modeChooser" class="mode-chooser">
+            <button class="mode-choice" data-mode="local"><strong>Auf diesem Gerät</strong><span>Lokaler Modus – kein Server nötig</span></button>
+            <button class="mode-choice" data-mode="server"><strong>Mit meinem Server</strong><span>Server-Modus – Docker-Backend verwenden</span></button>
+          </div>
+          <p class="hint">Ein Moduswechsel wechselt nur den aktiven Datenspeicher. Daten werden nicht automatisch synchronisiert oder vermischt.</p>
+        </div></details>
+
+        <details><summary>Verbindung / Server</summary><div class="details-body">
+          <form id="serverConfigForm" class="form-grid">
+            <label>Backend URL<input id="backendUrl" type="url" inputmode="url" placeholder="https://api.example.com" autocomplete="url"></label>
+            <label>Cloudflare Client ID<input id="cfClientId" type="text" autocomplete="off" autocapitalize="none"></label>
+            <label>Cloudflare Client Secret<div class="secret-row"><input id="cfClientSecret" type="password" autocomplete="new-password" placeholder="Neu setzen oder leer lassen"><button id="clearSecretsButton" type="button" class="button subtle">Löschen</button></div></label>
+            <div class="button-row"><button class="button primary" type="submit">Verbindung speichern</button><button id="testConnectionButton" class="button" type="button">Verbindung testen</button></div>
+          </form>
+          <p class="hint">Service-Tokens werden nur in IndexedDB auf diesem Gerät gespeichert, nie exportiert und nach dem Speichern nicht wieder vollständig angezeigt.</p>
+        </div></details>
+
+        <details><summary>KI / Link-Auswertung</summary><div class="details-body stack">
+          <p>Aktiver Server-KI-Anbieter: <strong id="aiProviderLabel">–</strong></p>
+          <p id="aiModelLabel" class="muted"></p>
+          <p id="aiSearchLabel" class="muted"></p>
+          <button id="testAiButton" class="button" type="button">KI-Verbindung testen</button>
+          <p class="hint">Ollama wird ausschließlich vom Docker-Backend angesprochen. Die GitHub-Pages-PWA verbindet sich niemals direkt mit Port 11434. Im lokalen Pages-Modus wird keine KI verwendet.</p>
+        </div></details>
+
+        <details><summary>Import / Export</summary><div class="details-body stack">
+          <button id="exportButton" class="button">Backup exportieren</button>
+          <label class="button file-button">Backup importieren<input id="importInput" type="file" accept="application/json,.json"></label>
+          <div id="transferControls" class="stack">
+            <button id="localToServerButton" class="button">Lokale Daten auf Server übertragen</button>
+            <button id="serverToLocalButton" class="button">Serverdaten lokal übernehmen</button>
+          </div>
+          <p class="hint">Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 2. v1-Backups bleiben importierbar. Zugangsdaten sind nie enthalten.</p>
+        </div></details>
+
+        <details><summary>Sicherheit & lokale Daten</summary><div class="details-body">
+          <p>Lokale Daten liegen nur auf diesem Gerät. Beim Löschen der PWA, der Website-Daten oder bei Geräteverlust können sie verloren gehen.</p>
+          <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
+        </div></details>
+
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">4.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Hauptnavigation">
+      <button class="nav-button active" data-view="collection"><span>▦</span><small>Sammlung</small></button>
+      <button class="nav-button" data-view="setup"><span>⚙</span><small>Setup</small></button>
+    </nav>
+  </div>
+
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Spielansicht</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><button id="detailOpenSourceButton" type="button" class="button hidden">Quelle öffnen</button><button id="detailOpenRulesButton" type="button" class="button hidden">Anleitung öffnen</button><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div></div></dialog>
+
+  <dialog id="gameDialog" class="dialog">
+    <form id="gameForm" method="dialog" class="dialog-card">
+      <div class="dialog-head"><div><p class="eyebrow">Brettspiel</p><h2 id="gameDialogTitle">Spiel erfassen</h2></div><button id="closeGameDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div>
+      <input id="gameId" type="hidden">
+      <div class="form-grid">
+        <label class="full">Titel *<input id="titleInput" required maxlength="180"></label>
+        <label class="full">Quell-Link<input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://…"></label>
+        <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Server-Modus; KI läuft nur im Docker-Backend</span></div>
+        <label class="full">Beschreibung<textarea id="descriptionInput" rows="4" maxlength="6000"></textarea></label>
+        <label>Spieler min.<input id="minPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>
+        <label>Spieler max.<input id="maxPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>
+        <label>Spieldauer (Min.)<input id="playTimeInput" type="number" min="1" max="9999" inputmode="numeric"></label>
+        <label>Mindestalter<input id="minAgeInput" type="number" min="0" max="99" inputmode="numeric"></label>
+        <label>Verlag<input id="publisherInput" maxlength="180"></label>
+        <label>Erscheinungsjahr<input id="yearInput" type="number" min="1800" max="2200" inputmode="numeric"></label>
+        <label>Autor / Designer<input id="designerInput" maxlength="240"></label>
+        <label>EAN / GTIN<input id="eanInput" maxlength="32" inputmode="numeric" autocapitalize="none"></label>
+        <label class="full">Auszeichnung<input id="awardInput" maxlength="500" placeholder="z. B. Spiel des Jahres 2024"></label>
+        <label class="full">Coverbild-Link<input id="coverUrlInput" type="url" inputmode="url" placeholder="https://…/cover.jpg"></label>
+        <div id="coverPreview" class="full cover-preview hidden"></div>
+        <label class="full">Tags<input id="tagsInput" placeholder="Familie, Karten, Koop"></label>
+        <label class="full">Anleitungs-Link<input id="rulesUrlInput" type="url" inputmode="url" placeholder="https://…/anleitung.pdf"></label>
+        <label class="full">Anleitung / Kurzregeln<textarea id="rulesTextInput" rows="6" maxlength="12000"></textarea></label>
+        <label class="full">Notizen<textarea id="notesInput" rows="3" maxlength="6000"></textarea></label>
+      </div>
+      <div class="dialog-actions"><button id="deleteGameButton" type="button" class="button danger hidden">Löschen</button><span class="spacer"></span><button id="cancelGameButton" type="button" class="button">Abbrechen</button><button type="submit" class="button primary">Speichern</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="firstRunDialog" class="dialog">
+    <div class="dialog-card compact"><div class="dialog-head"><div><p class="eyebrow">Erster Start</p><h2>Wie möchtest du die App verwenden?</h2></div></div>
+      <div class="mode-chooser first-run">
+        <button class="mode-choice" data-first-mode="local"><strong>Auf diesem Gerät</strong><span>Lokaler Modus – kein Server nötig</span></button>
+        <button class="mode-choice" data-first-mode="server"><strong>Mit meinem Server</strong><span>Docker-Backend verwenden</span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="messageDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2 id="messageTitle">Hinweis</h2><button id="closeMessageButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="messageBody" class="message-body"></div><div class="dialog-actions"><span class="spacer"></span><button id="messageOkButton" class="button primary" type="button">OK</button></div></div></dialog>
+
+
+
+  <dialog id="metadataPreviewDialog" class="dialog"><div class="dialog-card"><div class="dialog-head"><div><p class="eyebrow">Import-Vorschau</p><h2 id="metadataPreviewTitle">Gefundene Daten prüfen</h2></div><button id="closeMetadataPreviewButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="metadataPreviewBody" class="message-body"></div><div class="dialog-actions"><button id="cancelMetadataPreviewButton" class="button" type="button">Abbrechen</button><span class="spacer"></span><button id="applyMetadataPreviewButton" class="button primary" type="button">Vorschläge übernehmen</button></div></div></dialog>
+
+  <dialog id="strategyDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2>Import-Vorschau</h2><button id="closeStrategyButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="strategyBody" class="message-body"></div><div class="dialog-actions"><button id="replaceStrategyButton" class="button danger" type="button">Ersetzen</button><span class="spacer"></span><button id="mergeStrategyButton" class="button primary" type="button">Zusammenführen</button></div></div></dialog>
+
+  <script src="./config.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
