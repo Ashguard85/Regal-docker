@@ -41,7 +41,7 @@ def test_v1_sqlite_migrates_without_data_loss():
         assert game["cover_url"] == ""
         assert game["award"] == ""
         with db.connect() as c:
-            assert {r[0] for r in c.execute("SELECT version FROM schema_migrations")} == {1, 2}
+            assert {r[0] for r in c.execute("SELECT version FROM schema_migrations")} == {1, 2, 3}
 
 
 def test_v1_backup_is_accepted_and_upgraded_on_export():
@@ -54,7 +54,7 @@ def test_v1_backup_is_accepted_and_upgraded_on_export():
         result = db.import_backup(old, "merge")
         assert result["imported"] == 1
         assert db.get_game("old")["designer"] == ""
-        assert db.backup_payload()["version"] == 2
+        assert db.backup_payload()["version"] == 3
 
 
 def test_new_fields_roundtrip():

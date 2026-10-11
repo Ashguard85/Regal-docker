@@ -1,8 +1,10 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"4.0.0",defaultApiUrl:"",allowLocalMode:true};
-let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", rulesSearchProvider="none", collectionView=localStorage.getItem("brettspielregal-collection-view")||"list", activeDetailGameId="";
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"6.0.0",defaultApiUrl:"",allowLocalMode:true};
+let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", rulesSearchProvider="none";
+let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[];
+const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
 
 const FIELD_MAP=[
   ["title","Titel","titleInput"],["description","Beschreibung","descriptionInput"],["min_players","Spieler min.","minPlayersInput"],
@@ -18,9 +20,9 @@ function nl2br(s){return esc(s).replace(/\n/g,"<br>");}
 function modeLabel(){return currentMode==="server"?"Server":"Lokal";}
 function isDocker(){return config.buildTarget==="docker";}
 function selectedMode(){return isDocker()?"server":(localStorage.getItem("brettspielregal-mode")||"");}
-function setCollectionView(view){collectionView=view==="shelf"?"shelf":"list";localStorage.setItem("brettspielregal-collection-view",collectionView);updateCollectionViewButtons();renderGames();}
-function updateCollectionViewButtons(){const listBtn=$("viewListButton"), shelfBtn=$("viewShelfButton"); if(!listBtn||!shelfBtn)return; const listActive=collectionView!=="shelf"; listBtn.classList.toggle("active",listActive); shelfBtn.classList.toggle("active",!listActive); listBtn.setAttribute("aria-selected", String(listActive)); shelfBtn.setAttribute("aria-selected", String(!listActive));}
-function setModeValue(mode){if(!isDocker())localStorage.setItem("brettspielregal-mode",mode);currentMode=mode;}
+function setModeValue(mode){if(!isDocker())localStorage.setItem("brettspielregal-mode",mode);currentMode=mode;releaseCovers("list");releaseCovers("detail");}
+function setCollectionView(view){collectionView=view==="shelf"?"shelf":"list";localStorage.setItem("brettspielregal-collection-view",collectionView);renderGames();}
+function updateViewButtons(){for(const [id,view] of [["viewListButton","list"],["viewShelfButton","shelf"]]){const b=$(id);b.classList.toggle("active",collectionView===view);b.setAttribute("aria-pressed",String(collectionView===view));}}
 function setBusy(button,busy,label="Bitte warten …"){if(!button)return;if(busy){button.dataset.oldText=button.textContent;button.textContent=label;button.disabled=true;}else{button.textContent=button.dataset.oldText||button.textContent;button.disabled=false;}}
 function showBanner(message,type="info"){const el=$("statusBanner");if(!message){el.className="status-banner hidden";el.textContent="";return;}el.className=`status-banner${type==="error"?" error":""}`;el.textContent=message;}
 function showMessage(title,message){$("messageTitle").textContent=title;$("messageBody").innerHTML=`<p>${nl2br(message)}</p>`;$("messageDialog").showModal();}
@@ -71,15 +73,55 @@ async function loadGames(){
   try{games=await provider.list();renderGames();}
   catch(err){games=[];renderGames();showBanner(err.message,"error");}
 }
+function imageAttachment(game){
+  const images=(game.attachments||[]).filter(a=>a.kind==="image");
+  return images.find(a=>a.id===game.cover_attachment_id)||images[0]||null;
+}
+function coverHtml(game,classes="game-cover",attachment=null){
+  const selected=attachment||imageAttachment(game);
+  const initial=(game.title||"B").trim().slice(0,1).toLocaleUpperCase("de");
+  if(selected)return `<div class="${classes} game-cover-placeholder" data-attachment-id="${esc(selected.id)}" data-game-id="${esc(game.id)}" aria-label="Lade Bild"><span>${esc(initial)}</span></div>`;
+  const url=safeHttpsUrl(game.cover_url);
+  if(url)return `<img class="${classes}" src="${esc(url)}" alt="Cover von ${esc(game.title)}" loading="lazy" referrerpolicy="no-referrer">`;
+  return `<div class="${classes} game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
+}
+function releaseCovers(scope){
+  const r=coverResources[scope];if(r.observer){r.observer.disconnect();r.observer=null;}
+  for(const url of r.urls)URL.revokeObjectURL(url);r.urls=[];
+}
+function hydrateCovers(scope){
+  const root=scope==="list"?$("gameList"):$("detailBody");
+  const resource=coverResources[scope];
+  const hydrate=async node=>{
+    if(node.dataset.loading)return;node.dataset.loading="1";
+    const gameId=node.dataset.gameId,attId=node.dataset.attachmentId,providerAtStart=provider;
+    try{
+      const blob=await providerAtStart.getAttachmentBlob(gameId,attId);
+      if(provider!==providerAtStart||!node.isConnected||!root.contains(node))return;
+      const url=URL.createObjectURL(blob),img=document.createElement("img");
+      resource.urls.push(url);img.className=node.className.replace("game-cover-placeholder","");img.alt="Gespeichertes Bild";img.loading="lazy";
+      img.onload=()=>{if(node.isConnected&&root.contains(node))node.replaceWith(img);};
+      img.onerror=()=>{if(node.isConnected)node.title="Keine Bildvorschau in diesem Browser – die Datei kann trotzdem geöffnet werden.";};
+      img.src=url;
+    }catch{node.removeAttribute("data-loading");node.title="Bild konnte nicht geladen werden";}
+  };
+  const nodes=[...root.querySelectorAll("[data-attachment-id]")];
+  if("IntersectionObserver" in window){
+    resource.observer=new IntersectionObserver(entries=>{
+      for(const entry of entries)if(entry.isIntersecting){resource.observer?.unobserve(entry.target);hydrate(entry.target);}
+    },{rootMargin:"240px"});
+    for(const node of nodes)resource.observer.observe(node);
+  }else for(const node of nodes)hydrate(node);
+}
 function renderGames(){
+  releaseCovers("list");
   const q=$("searchInput").value.trim().toLocaleLowerCase("de");
   const filtered=games.filter(g=>!q||[g.title,g.description,g.publisher,g.designer,g.ean,g.award,g.notes,...(g.tags||[])].join(" ").toLocaleLowerCase("de").includes(q));
-  $("collectionCount").textContent=q&&filtered.length!==games.length?`${filtered.length} von ${games.length} ${games.length===1?"Spiel":"Spielen"}`:`${games.length} ${games.length===1?"Spiel":"Spiele"}`;
+  $("collectionCount").textContent=q?`${filtered.length} von ${games.length} Spielen`:`${games.length} ${games.length===1?"Spiel":"Spiele"}`;
   $("emptyState").classList.toggle("hidden",games.length!==0);
   const list=$("gameList");list.innerHTML="";list.classList.toggle("shelf-view",collectionView==="shelf");
   for(const g of filtered){
-    const card=document.createElement("article");
-    const meta=[];
+    const card=document.createElement("article"),meta=[];
     if(g.min_players||g.max_players)meta.push({text:`${g.min_players||"?"}–${g.max_players||g.min_players||"?"} Spieler`,kind:"core"});
     if(g.play_time_min)meta.push({text:`${g.play_time_min} Min.`,kind:"core"});
     if(g.min_age!==null&&g.min_age!==undefined&&g.min_age!=="")meta.push({text:`ab ${g.min_age}`,kind:"core"});
@@ -87,26 +129,22 @@ function renderGames(){
     if(g.year)meta.push({text:String(g.year),kind:""});
     if(g.award)meta.push({text:g.award,kind:"award"});
     for(const tag of (g.tags||[]).slice(0,2))meta.push({text:tag,kind:""});
-    const cover=safeHttpsUrl(g.cover_url);
-    const initial=(g.title||"B").trim().slice(0,1).toLocaleUpperCase("de");
-    const listVisual=cover?`<img class="game-cover" src="${esc(cover)}" alt="Cover von ${esc(g.title)}" loading="lazy" referrerpolicy="no-referrer">`:`<div class="game-cover game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
-    const shelfVisual=cover?`<img class="game-cover shelf-cover" src="${esc(cover)}" alt="Cover von ${esc(g.title)}" loading="lazy" referrerpolicy="no-referrer">`:`<div class="game-cover shelf-cover game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
     if(collectionView==="shelf"){
       card.className="game-card shelf-card";
-      const subline=[g.publisher,g.year].filter(Boolean).join(" · ") || (g.designer?`von ${g.designer}`:"Ohne weitere Angaben");
-      const mini=[meta[0]?.text, meta[1]?.text, meta[2]?.text].filter(Boolean).slice(0,3);
-      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${shelfVisual}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p>${mini.length?`<div class="shelf-mini-meta">${mini.map(x=>`<span class="shelf-mini-chip">${esc(x)}</span>`).join("")}</div>`:""}</div></button>`;
+      const subline=[g.publisher,g.year].filter(Boolean).join(" · ")||(g.designer?`von ${g.designer}`:"Meine Sammlung");
+      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
     }else{
       card.className="game-card";
-      card.innerHTML=`<button class="card-hit with-cover" type="button">${listVisual}<div class="card-copy"><div class="game-title-row"><h3>${esc(g.title)}</h3><span aria-hidden="true">›</span></div>${g.description?`<p class="game-description">${esc(g.description)}</p>`:""}<div class="game-meta">${meta.map(x=>`<span class="chip ${x.kind}">${esc(x.text)}</span>`).join("")}</div></div></button>`;
+      card.innerHTML=`<button class="card-hit with-cover" type="button">${coverHtml(g)}<div class="card-copy"><div class="game-title-row"><h3>${esc(g.title)}</h3><span aria-hidden="true">›</span></div>${g.description?`<p class="game-description">${esc(g.description)}</p>`:""}<div class="game-meta">${meta.map(x=>`<span class="chip ${x.kind}">${esc(x.text)}</span>`).join("")}</div></div></button>`;
     }
-    card.querySelector("button").addEventListener("click",()=>openGameDetail(g));list.append(card);
+    card.querySelector("button").addEventListener("click",()=>openGameDetail(g.id));list.append(card);
   }
   if(games.length&&filtered.length===0)list.innerHTML='<div class="empty-state"><strong>Nichts gefunden</strong><p>Versuche einen anderen Suchbegriff.</p></div>';
-  updateCollectionViewButtons();
+  updateViewButtons();hydrateCovers("list");
 }
 
 function clearGameForm(){
+  pendingFiles=[];$("gameAttachmentInput").value="";$("pendingAttachmentList").innerHTML="";$("existingAttachmentList").innerHTML="";$("attachmentFormStatus").textContent="";
   for(const id of ["gameId","titleInput","sourceUrlInput","descriptionInput","minPlayersInput","maxPlayersInput","playTimeInput","minAgeInput","publisherInput","yearInput","designerInput","eanInput","awardInput","coverUrlInput","tagsInput","rulesUrlInput","rulesTextInput","notesInput"])$(id).value="";
   renderCoverPreview();
 }
@@ -126,36 +164,88 @@ function openGame(game=null){
     $("tagsInput").value=(game.tags||[]).join(", ");$("rulesUrlInput").value=game.rules_url||"";$("rulesTextInput").value=game.rules_text||"";$("notesInput").value=game.notes||"";
     renderCoverPreview();
   }
+  renderEditAttachments(game);
   $("gameDialog").showModal();setTimeout(()=>$("titleInput").focus(),50);
 }
-
-function detailChip(text,kind=""){return `<span class="chip ${kind}">${esc(text)}</span>`;}
-function openLink(url){if(!url)return;window.open(url,"_blank","noopener,noreferrer");}
-function openGameDetail(gameOrId){
-  const game=typeof gameOrId==="string"?games.find(g=>g.id===gameOrId):gameOrId;
-  if(!game)return;
-  activeDetailGameId=game.id||"";
-  const cover=safeHttpsUrl(game.cover_url);
-  const initial=(game.title||"B").trim().slice(0,1).toLocaleUpperCase("de");
-  const visual=cover?`<img class="detail-cover" src="${esc(cover)}" alt="Cover von ${esc(game.title)}" loading="lazy" referrerpolicy="no-referrer">`:`<div class="detail-cover game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
-  const chips=[];
-  if(game.min_players||game.max_players)chips.push(detailChip(`${game.min_players||"?"}–${game.max_players||game.min_players||"?"} Spieler`,`core`));
-  if(game.play_time_min)chips.push(detailChip(`${game.play_time_min} Min.`,`core`));
-  if(game.min_age!==null&&game.min_age!==undefined&&game.min_age!=="")chips.push(detailChip(`ab ${game.min_age}`,`core`));
-  if(game.award)chips.push(detailChip(game.award,`award`));
-  for(const tag of (game.tags||[]))chips.push(detailChip(tag));
-  const facts=[
-    ["Verlag", game.publisher], ["Jahr", game.year], ["Autor / Designer", game.designer], ["EAN / GTIN", game.ean]
-  ].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
-  $("detailTitle").textContent=game.title||"Spiel";
-  $("detailBody").innerHTML=`<div class="detail-hero">${visual}<div class="detail-copy"><h3>${esc(game.title||"Unbenanntes Spiel")}</h3>${game.description?`<p class="detail-description">${esc(game.description)}</p>`:`<p class="detail-description">Noch keine Beschreibung hinterlegt.</p>`}${chips.length?`<div class="detail-meta">${chips.join("")}</div>`:""}</div></div><div class="detail-panels"><section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([label,value])=>`<div class="detail-item"><span>${esc(label)}</span><strong>${esc(String(value))}</strong></div>`).join(""):`<div class="detail-item"><p>Noch keine weiteren Daten hinterlegt.</p></div>`}</div></section>${(game.source_url||game.rules_url)?`<section class="detail-panel"><h4>Links</h4><div class="detail-links">${game.source_url?`<a class="detail-link" href="${esc(game.source_url)}" target="_blank" rel="noopener noreferrer">Produkt- oder Quellseite<small>${esc(game.source_url)}</small></a>`:""}${game.rules_url?`<a class="detail-link" href="${esc(game.rules_url)}" target="_blank" rel="noopener noreferrer">Anleitung öffnen<small>${esc(game.rules_url)}</small></a>`:""}</div></section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln / Anleitung</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
-  $("detailOpenSourceButton").classList.toggle("hidden",!game.source_url);
-  $("detailOpenRulesButton").classList.toggle("hidden",!game.rules_url);
-  $("detailOpenSourceButton").onclick=()=>openLink(game.source_url);
-  $("detailOpenRulesButton").onclick=()=>openLink(game.rules_url);
-  $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();openGame(game);};
-  $("gameDetailDialog").showModal();
+function sizeText(bytes){return bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(bytes/1024))} KB`;}
+function renderEditAttachments(game=null){
+  const current=game?.attachments||[];
+  $("pendingAttachmentList").innerHTML=pendingFiles.map((file,i)=>`<div class="attachment-row"><div class="attachment-row-copy"><strong>${esc(file.name)}</strong><small>Wird beim Speichern hinzugefügt · ${sizeText(file.size)}</small></div><button type="button" class="button" data-remove-pending="${i}">Entfernen</button></div>`).join("");
+  $("pendingAttachmentList").querySelectorAll("[data-remove-pending]").forEach(b=>b.addEventListener("click",()=>{pendingFiles.splice(Number(b.dataset.removePending),1);renderEditAttachments(game);}));
+  $("existingAttachmentList").innerHTML=current.map(a=>`<div class="attachment-row"><div class="attachment-row-copy"><strong>${a.kind==="rules"?"📄":"🖼️"} ${esc(a.filename)}</strong><small>Gespeichert · ${sizeText(a.size)}</small></div><button type="button" class="button danger" data-delete-existing="${esc(a.id)}">Löschen</button></div>`).join("");
+  $("existingAttachmentList").querySelectorAll("[data-delete-existing]").forEach(b=>b.addEventListener("click",async()=>{
+    if(!confirm("Diesen Anhang endgültig löschen?"))return;
+    try{await provider.removeAttachment(game.id,b.dataset.deleteExisting);await loadGames();renderEditAttachments(games.find(g=>g.id===game.id));}
+    catch(err){$("attachmentFormStatus").textContent=err.message;}
+  }));
 }
+function addPendingFiles(fileList){
+  const files=[...fileList];const game=games.find(g=>g.id===$("gameId").value);
+  const available=15-(game?.attachments?.length||0)-pendingFiles.length;
+  if(files.length>available){$("attachmentFormStatus").textContent="Maximal 15 Anhänge pro Spiel möglich.";return;}
+  for(const file of files){
+    if(file.size<1||file.size>10*1024*1024){$("attachmentFormStatus").textContent=`${file.name}: maximal 10 MB pro Datei.`;continue;}
+    pendingFiles.push(file);
+  }
+  renderEditAttachments(game);
+}
+function detailChip(text,kind=""){return `<span class="chip ${kind}">${esc(text)}</span>`;}
+function openGameDetail(gameId){
+  const game=games.find(g=>g.id===gameId);if(!game)return;
+  activeDetailGameId=gameId;releaseCovers("detail");$("detailAttachmentStatus").textContent="";
+  const chips=[];
+  if(game.min_players||game.max_players)chips.push(detailChip(`${game.min_players||"?"}–${game.max_players||game.min_players||"?"} Spieler`,"core"));
+  if(game.play_time_min)chips.push(detailChip(`${game.play_time_min} Min.`,"core"));
+  if(game.min_age!==null&&game.min_age!==undefined&&game.min_age!=="")chips.push(detailChip(`ab ${game.min_age}`,"core"));
+  if(game.award)chips.push(detailChip(game.award,"award"));
+  for(const tag of game.tags||[])chips.push(detailChip(tag));
+  const facts=[["Verlag",game.publisher],["Jahr",game.year],["Autor / Designer",game.designer],["EAN / GTIN",game.ean]].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
+  const images=(game.attachments||[]).filter(a=>a.kind==="image"),pdfs=(game.attachments||[]).filter(a=>a.kind==="rules"),selected=imageAttachment(game);
+  const imageGallery=images.length?`<div class="attachment-gallery">${images.map(a=>`<div class="attachment-tile ${selected?.id===a.id?"cover-selected":""}">${coverHtml(game,"tile-image",a)}<strong>${esc(a.filename)}</strong><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Ansehen</button><button class="button" type="button" data-cover-attachment="${esc(a.id)}" ${selected?.id===a.id?"disabled":""}>${selected?.id===a.id?"Cover ✓":"Als Cover"}</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
+  const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button><button class="button" type="button" data-download-attachment="${esc(a.id)}">Laden</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
+  const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
+  $("detailTitle").textContent=game.title||"Spiel";
+  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels"><section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section><section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
+  $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
+  const find=id=>(game.attachments||[]).find(a=>a.id===id);
+  $("detailBody").querySelectorAll("[data-open-attachment]").forEach(b=>b.addEventListener("click",()=>openStoredAttachment(game,find(b.dataset.openAttachment))));
+  $("detailBody").querySelectorAll("[data-download-attachment]").forEach(b=>b.addEventListener("click",()=>downloadStoredAttachment(game,find(b.dataset.downloadAttachment))));
+  $("detailBody").querySelectorAll("[data-cover-attachment]").forEach(b=>b.addEventListener("click",async()=>{
+    try{await provider.update(game.id,{...game,cover_attachment_id:b.dataset.coverAttachment});await loadGames();openGameDetail(game.id);}
+    catch(err){$("detailAttachmentStatus").textContent=err.message;}
+  }));
+  $("detailBody").querySelectorAll("[data-delete-attachment]").forEach(b=>b.addEventListener("click",async()=>{
+    if(!confirm("Diesen Anhang endgültig löschen?"))return;
+    try{await provider.removeAttachment(game.id,b.dataset.deleteAttachment);await loadGames();openGameDetail(game.id);}
+    catch(err){$("detailAttachmentStatus").textContent=err.message;}
+  }));
+  hydrateCovers("detail");
+  if(!$("gameDetailDialog").open)$("gameDetailDialog").showModal();
+}
+async function downloadStoredAttachment(game,att){
+  if(!att)return;
+  try{const blob=await provider.getAttachmentBlob(game.id,att.id),url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=att.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(err){$("detailAttachmentStatus").textContent=err.message;}
+}
+async function openStoredAttachment(game,att){
+  if(!att)return;
+  const tab=window.open("about:blank","_blank");if(tab)tab.opener=null;
+  try{const blob=await provider.getAttachmentBlob(game.id,att.id),url=URL.createObjectURL(blob);
+    if(tab){tab.location.href=url;setTimeout(()=>URL.revokeObjectURL(url),300000);}
+    else{const a=document.createElement("a");a.href=url;a.download=att.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
+  }catch(err){tab?.close();$("detailAttachmentStatus").textContent=err.message;}
+}
+async function addDetailFiles(files){
+  if(!files.length||!activeDetailGameId)return;
+  const gameId=activeDetailGameId;$("detailAttachmentStatus").textContent="Dateien werden gespeichert …";
+  try{
+    for(const file of files)await provider.addAttachment(gameId,file);
+    await loadGames();openGameDetail(gameId);$("detailAttachmentStatus").textContent=`${files.length} Datei(en) gespeichert.`;
+  }catch(err){await loadGames();openGameDetail(gameId);$("detailAttachmentStatus").textContent=`Nicht alle Dateien gespeichert: ${err.message}`;}
+  $("detailAttachmentInput").value="";
+}
+
 function formGame(){return {
   title:$("titleInput").value.trim(),source_url:$("sourceUrlInput").value.trim(),description:$("descriptionInput").value.trim(),
   min_players:inputNumber("minPlayersInput"),max_players:inputNumber("maxPlayersInput"),play_time_min:inputNumber("playTimeInput"),min_age:inputNumber("minAgeInput"),
@@ -174,8 +264,15 @@ function applyProposal(d){
 async function saveGame(event){
   event.preventDefault();const data=formGame();if(!data.title){showMessage("Titel fehlt","Bitte gib einen Titel ein.");return;}
   const submit=$("gameForm").querySelector('button[type="submit"]');setBusy(submit,true,"Speichere …");
-  try{const id=$("gameId").value;if(id)await provider.update(id,data);else await provider.create(data);$("gameDialog").close();await loadGames();}
-  catch(err){showMessage("Speichern fehlgeschlagen",err.message);}finally{setBusy(submit,false);}
+  try{
+    const id=$("gameId").value;const saved=id?await provider.update(id,data):await provider.create(data);
+    $("gameId").value=saved.id;
+    for(let i=0;i<pendingFiles.length;){
+      try{await provider.addAttachment(saved.id,pendingFiles[i]);pendingFiles.splice(i,1);}
+      catch(err){await loadGames();renderEditAttachments(games.find(g=>g.id===saved.id));$("attachmentFormStatus").textContent=`Spiel gespeichert, aber Anhang fehlgeschlagen: ${err.message}`;return;}
+    }
+    $("gameDialog").close();await loadGames();
+  }catch(err){$("attachmentFormStatus").textContent=`Speichern fehlgeschlagen: ${err.message}`;}finally{setBusy(submit,false);}
 }
 async function removeGame(){const id=$("gameId").value;if(!id)return;if(!confirm("Dieses Brettspiel wirklich löschen?"))return;try{await provider.remove(id);$("gameDialog").close();await loadGames();}catch(err){showMessage("Löschen fehlgeschlagen",err.message);}}
 
@@ -235,7 +332,7 @@ function fallbackDownload(blob,name){const a=document.createElement("a");a.href=
 async function exportCurrent(){try{const backup=await provider.exportData();await downloadJson(backup,`brettspielregal-${currentMode}-${new Date().toISOString().slice(0,10)}.json`);}catch(err){showMessage("Export fehlgeschlagen",err.message);}}
 function strategyDialog(preview,context){
   return new Promise(resolve=>{
-    $("strategyBody").innerHTML=`<p>${esc(context)}</p><p><strong>${preview.total}</strong> Datensätze im Import<br>${preview.new} neu · ${preview.conflicts} Konflikte · ${preview.same} unverändert</p><p class="hint">„Ersetzen“ löscht den aktuellen Zielbestand vor dem Import. „Zusammenführen“ behält andere Ziel-Datensätze; gleiche IDs aus dem Import werden übernommen.</p>`;
+    $("strategyBody").innerHTML=`<p>${esc(context)}</p><p><strong>${preview.total}</strong> Spiele und <strong>${preview.attachments||0}</strong> Anhänge im Import<br>${preview.new} neu · ${preview.conflicts} Konflikte · ${preview.same} unverändert</p><p class="hint">„Ersetzen“ löscht alle aktuellen Spiele und Anhänge vor dem Import. „Zusammenführen“ behält andere Ziel-Datensätze; gleiche IDs aus dem Import werden übernommen.</p>`;
     const dlg=$("strategyDialog");
     const finish=v=>{cleanup();dlg.close();resolve(v);};
     const merge=()=>finish("merge"),replace=()=>finish("replace"),close=()=>finish(null);
@@ -244,13 +341,13 @@ function strategyDialog(preview,context){
   });
 }
 async function importFile(file){
-  try{const backup=validateBackup(JSON.parse(await file.text()));const preview=await provider.previewImport(backup);const strategy=await strategyDialog(preview,`Backup v${backup.version} in den aktuell aktiven Speicher importieren?`);if(!strategy)return;await provider.importData(backup,strategy);await loadGames();showMessage("Import abgeschlossen",`${backup.data.games.length} Datensätze wurden verarbeitet.`);}catch(err){showMessage("Import fehlgeschlagen",err.message);}finally{$("importInput").value="";}
+  try{const backup=validateBackup(JSON.parse(await file.text()));const preview=await provider.previewImport(backup);const strategy=await strategyDialog(preview,`Backup v${backup.version} in den aktuell aktiven Speicher importieren?`);if(!strategy)return;await provider.importData(backup,strategy);await loadGames();showMessage("Import abgeschlossen",`${backup.data.games.length} Spiele und ${(backup.data.attachments||[]).length} Anhänge wurden verarbeitet.`);}catch(err){showMessage("Import fehlgeschlagen",err.message);}finally{$("importInput").value="";}
 }
 async function localToServer(){
-  try{const local=new LocalProvider();const backup=await local.exportData();if(backup.data.games.length===0){showMessage("Keine lokalen Daten","Im lokalen Speicher sind keine Brettspiele vorhanden.");return;}const server=await makeServerProvider();const preview=await server.previewImport(backup);const strategy=await strategyDialog(preview,"Lokale Daten auf den Server übertragen? Der lokale Bestand bleibt dabei unverändert.");if(!strategy)return;await server.importData(backup,strategy);showMessage("Übertragung abgeschlossen",`${backup.data.games.length} lokale Datensätze wurden an den Server übertragen.`);if(currentMode==="server")await loadGames();}catch(err){showMessage("Übertragung fehlgeschlagen",err.message);}
+  try{const local=new LocalProvider();const backup=await local.exportData();if(backup.data.games.length===0){showMessage("Keine lokalen Daten","Im lokalen Speicher sind keine Brettspiele vorhanden.");return;}const server=await makeServerProvider();const preview=await server.previewImport(backup);const strategy=await strategyDialog(preview,"Lokale Daten auf den Server übertragen? Der lokale Bestand bleibt dabei unverändert.");if(!strategy)return;await server.importData(backup,strategy);showMessage("Übertragung abgeschlossen",`${backup.data.games.length} Spiele und ${(backup.data.attachments||[]).length} Anhänge wurden an den Server übertragen.`);if(currentMode==="server")await loadGames();}catch(err){showMessage("Übertragung fehlgeschlagen",err.message);}
 }
 async function serverToLocal(){
-  try{const server=await makeServerProvider();const backup=await server.exportData();const local=new LocalProvider();const preview=await local.previewImport(backup);const strategy=await strategyDialog(preview,"Serverdaten lokal übernehmen? Vor einem Ersetzen empfiehlt sich ein Export des aktuellen lokalen Bestands.");if(!strategy)return;if(strategy==="replace"&&confirm("Vor dem Ersetzen jetzt ein lokales Sicherheitsbackup exportieren?")){const old=await local.exportData();await downloadJson(old,`brettspielregal-lokal-vor-restore-${new Date().toISOString().slice(0,10)}.json`);}await local.importData(backup,strategy);showMessage("Lokale Übernahme abgeschlossen",`${backup.data.games.length} Server-Datensätze wurden lokal übernommen.`);if(currentMode==="local")await loadGames();}catch(err){showMessage("Übernahme fehlgeschlagen",err.message);}
+  try{const server=await makeServerProvider();const backup=await server.exportData();const local=new LocalProvider();const preview=await local.previewImport(backup);const strategy=await strategyDialog(preview,"Serverdaten lokal übernehmen? Vor einem Ersetzen empfiehlt sich ein Export des aktuellen lokalen Bestands.");if(!strategy)return;if(strategy==="replace"&&confirm("Vor dem Ersetzen jetzt ein lokales Sicherheitsbackup exportieren?")){const old=await local.exportData();await downloadJson(old,`brettspielregal-lokal-vor-restore-${new Date().toISOString().slice(0,10)}.json`);}await local.importData(backup,strategy);showMessage("Lokale Übernahme abgeschlossen",`${backup.data.games.length} Spiele und ${(backup.data.attachments||[]).length} Anhänge wurden lokal übernommen.`);if(currentMode==="local")await loadGames();}catch(err){showMessage("Übernahme fehlgeschlagen",err.message);}
 }
 
 async function loadSetup(){
@@ -280,17 +377,22 @@ async function switchMode(mode){
 function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
 
 function bindEvents(){
-  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("searchInput").addEventListener("input",renderGames);$("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
+  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("searchInput").addEventListener("input",renderGames);
+  $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
+  $("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
+  $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));
+  $("gameAttachmentInput").addEventListener("change",e=>{addPendingFiles(e.target.files||[]);e.target.value="";});
+  $("detailAttachmentInput").addEventListener("change",e=>addDetailFiles([...e.target.files||[]]));
   $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
   $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
-  const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);$("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
+  const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
   document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();}));
   window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
 }
 
 async function init(){
-  bindEvents();updateCollectionViewButtons();$("versionLabel").textContent=config.version;
+  bindEvents();updateViewButtons();$("versionLabel").textContent=config.version;
   if("serviceWorker" in navigator){navigator.serviceWorker.register("./service-worker.js").catch(()=>{});}
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){
     currentMode="local";provider=new LocalProvider();$("modeBadge").textContent="Lokal";await loadSetup();$("firstRunDialog").showModal();return;

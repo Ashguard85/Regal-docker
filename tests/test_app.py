@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "4.0.0"
+        assert cfg["version"] == "6.0.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -50,7 +50,7 @@ def test_backup_import_and_cors():
         c.post("/api/games", json={"title": "Azul"})
         backup = c.get("/api/export").json
         assert backup["format"] == "brettspielregal-backup"
-        assert backup["version"] == 2
+        assert backup["version"] == 3
         preview = c.post("/api/import/preview", json={"backup": backup})
         assert preview.status_code == 200
         preflight = c.options("/api/games", headers={"Origin":"https://app.example.com","Access-Control-Request-Method":"GET"})

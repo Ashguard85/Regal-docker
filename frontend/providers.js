@@ -1,8 +1,8 @@
-import {getAllGames,getGame,putGame,deleteGame,replaceGames,mergeGames,getSetting,setSetting,getSecret,setSecret,clearSecrets} from "./db.js";
+import {getAllGames,getGame,putGame,deleteGame,getAllAttachments,getAttachment,putAttachment,deleteAttachment,importGamesAndAttachments,getSetting,setSetting,getSecret,setSecret,clearSecrets} from "./db.js";
 
 export const BACKUP_FORMAT="brettspielregal-backup";
-export const BACKUP_VERSION=2;
-export const SUPPORTED_BACKUP_VERSIONS=new Set([1,2]);
+export const BACKUP_VERSION=3;
+export const SUPPORTED_BACKUP_VERSIONS=new Set([1,2,3]);
 
 function nowIso(){return new Date().toISOString();}
 function id(){return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;}
@@ -13,7 +13,7 @@ function cleanGame(raw={}){
     id: String(raw.id||id()), title:String(raw.title||"").trim(), description:String(raw.description||"").trim(),
     source_url:String(raw.source_url||"").trim(), rules_url:String(raw.rules_url||"").trim(), rules_text:String(raw.rules_text||"").trim(),
     min_players:num(raw.min_players), max_players:num(raw.max_players), play_time_min:num(raw.play_time_min), min_age:num(raw.min_age),
-    publisher:String(raw.publisher||"").trim(), year:num(raw.year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), cover_url:String(raw.cover_url||"").trim(), award:String(raw.award||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
+    publisher:String(raw.publisher||"").trim(), year:num(raw.year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), cover_url:String(raw.cover_url||"").trim(), cover_attachment_id:String(raw.cover_attachment_id||"").trim(), award:String(raw.award||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
     created_at:raw.created_at||nowIso(), updated_at:raw.updated_at||nowIso()
   };
 }
@@ -21,21 +21,104 @@ function validateBackup(backup){
   if(!backup||backup.format!==BACKUP_FORMAT||!SUPPORTED_BACKUP_VERSIONS.has(backup.version)||!backup.data||!Array.isArray(backup.data.games))throw new Error("Ungültiges oder nicht unterstütztes Backup-Format.");
   return backup;
 }
-function backupFromGames(games,meta={}){return {format:BACKUP_FORMAT,version:BACKUP_VERSION,exported_at:nowIso(),meta,data:{games:games.map(cleanGame),settings:{}}};}
+function backupFromGames(games,meta={},attachments=[]){return {format:BACKUP_FORMAT,version:BACKUP_VERSION,exported_at:nowIso(),meta,data:{games:games.map(cleanGame),attachments,settings:{}}};}
 function comparable(g){const x={...cleanGame(g)};delete x.updated_at;return JSON.stringify(x);}
 function previewAgainst(current,incoming){const map=new Map(current.map(g=>[g.id,g]));let fresh=0,conflicts=0,same=0;for(const g of incoming){const old=map.get(g.id);if(!old)fresh++;else if(comparable(old)===comparable(g))same++;else conflicts++;}return {total:incoming.length,new:fresh,conflicts,same};}
 
+export const MAX_ATTACHMENT_SIZE=10*1024*1024;
+export const MAX_ATTACHMENTS_PER_GAME=15;
+function mimeFromHeader(bytes){
+  if(bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return "image/jpeg";
+  if([137,80,78,71,13,10,26,10].every((n,i)=>bytes[i]===n))return "image/png";
+  const header=String.fromCharCode(...bytes.slice(0,12));
+  if(header.startsWith("GIF87a")||header.startsWith("GIF89a"))return "image/gif";
+  if(header.startsWith("RIFF")&&header.slice(8,12)==="WEBP")return "image/webp";
+  if(header.slice(4,8)==="ftyp"){
+    const brand=header.slice(8,12);
+    if(["heic","heix","hevc","hevx","heim","heis"].includes(brand))return "image/heic";
+    if(["mif1","msf1","heif"].includes(brand))return "image/heif";
+  }
+  if(header.startsWith("%PDF-"))return "application/pdf";
+  return "";
+}
+async function validateFile(file){
+  if(!file||file.size<1||file.size>MAX_ATTACHMENT_SIZE)throw new Error("Datei muss zwischen 1 Byte und 10 MB groß sein.");
+  const mime=mimeFromHeader(new Uint8Array(await file.slice(0,32).arrayBuffer()));
+  if(!mime)throw new Error("Erlaubt sind JPG, PNG, GIF, WebP, HEIC/HEIF und PDF.");
+  return mime;
+}
+function safeFilename(name,mime=""){
+  let clean=String(name||"Anhang").replace(/\\/g,"/").split("/").pop().replace(/[\x00-\x1f\x7f]/g,"").replace(/^\.+|\.+$/g,"").slice(0,180)||"Anhang";
+  const extensions={"image/jpeg":[".jpg",".jpeg"],"image/png":[".png"],"image/gif":[".gif"],"image/webp":[".webp"],"image/heic":[".heic"],"image/heif":[".heif"],"application/pdf":[".pdf"]}[mime];
+  if(extensions&&!extensions.some(ext=>clean.toLowerCase().endsWith(ext)))clean=clean.slice(0,175)+extensions[0];
+  return clean;
+}
+function metadata(row){const {blob,content_base64,...rest}=row;return rest;}
+async function blobToBase64(blob){
+  const bytes=new Uint8Array(await blob.arrayBuffer());let str="";
+  for(let i=0;i<bytes.length;i+=32768)str+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return btoa(str);
+}
+async function decodeAttachments(backup){
+  if(backup.version!==3)return [];
+  const rows=backup.data.attachments??[];
+  if(!Array.isArray(rows)||rows.length>1000)throw new Error("Ungültige Anhänge im Backup.");
+  const games=new Set(backup.data.games.map(g=>g.id));
+  const ids=new Set(),counts=new Map(),result=[];
+  for(const row of rows){
+    if(!row||typeof row!=="object"||!games.has(row.game_id)||typeof row.content_base64!=="string"||!(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id||"")))throw new Error("Ungültiger Anhang im Backup.");
+    if(ids.has(row.id))throw new Error("Doppelte Anhang-ID im Backup.");ids.add(row.id);
+    const count=(counts.get(row.game_id)||0)+1;counts.set(row.game_id,count);
+    if(count>MAX_ATTACHMENTS_PER_GAME)throw new Error("Mehr als 15 Anhänge für ein Spiel.");
+    if(row.content_base64.length>Math.ceil(MAX_ATTACHMENT_SIZE/3)*4+16)throw new Error("Anhang im Backup ist zu groß.");
+    let decoded;try{decoded=atob(row.content_base64);}catch{throw new Error("Ungültiger Dateiinhalt im Backup.");}
+    const bytes=Uint8Array.from(decoded,c=>c.charCodeAt(0));
+    const mime=mimeFromHeader(bytes.subarray(0,32));
+    if(!mime||bytes.length<1||bytes.length>MAX_ATTACHMENT_SIZE||row.mime_type&&row.mime_type!==mime)throw new Error("Dateityp oder Dateigröße im Backup ungültig.");
+    result.push({id:row.id,game_id:row.game_id,filename:safeFilename(row.filename,mime),mime_type:mime,kind:mime==="application/pdf"?"rules":"image",size:bytes.length,created_at:row.created_at||nowIso(),blob:new Blob([bytes],{type:mime})});
+  }
+  return result;
+}
+
 export class LocalProvider{
   constructor(){this.kind="local";}
-  async list(){return (await getAllGames()).map(cleanGame).sort((a,b)=>a.title.localeCompare(b.title,"de"));}
-  async get(id){const g=await getGame(id);if(!g)throw new Error("Spiel wurde nicht gefunden.");return cleanGame(g);}
+  async list(){
+    const games=(await getAllGames()).map(cleanGame).sort((a,b)=>a.title.localeCompare(b.title,"de"));
+    const grouped=new Map();
+    for(const a of await getAllAttachments()){
+      if(!grouped.has(a.game_id))grouped.set(a.game_id,[]);
+      grouped.get(a.game_id).push(metadata(a));
+    }
+    for(const game of games)game.attachments=(grouped.get(game.id)||[]).sort((a,b)=>a.created_at.localeCompare(b.created_at));
+    return games;
+  }
+  async get(id){const g=(await this.list()).find(g=>g.id===id);if(!g)throw new Error("Spiel wurde nicht gefunden.");return g;}
   async create(data){const g=cleanGame(data);g.created_at=g.updated_at=nowIso();await putGame(g);return g;}
   async update(id,data){const old=await getGame(id);if(!old)throw new Error("Spiel wurde nicht gefunden.");const g=cleanGame({...old,...data,id,created_at:old.created_at,updated_at:nowIso()});await putGame(g);return g;}
   async remove(id){await deleteGame(id);}
-  async exportData(){return backupFromGames(await this.list(),{source:"local"});}
-  async previewImport(backup){validateBackup(backup);return previewAgainst(await this.list(),backup.data.games.map(cleanGame));}
-  async importData(backup,strategy="merge"){validateBackup(backup);const games=backup.data.games.map(cleanGame);if(strategy==="replace")await replaceGames(games);else await mergeGames(games);return {imported:games.length,strategy};}
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"4.0.0",ai_import_enabled:false,rules_search_enabled:false,ai_provider:"none",ai_model:"",rules_search_provider:"none"};}
+  async listAttachments(gameId){return (await getAllAttachments()).filter(a=>a.game_id===gameId).map(metadata);}
+  async addAttachment(gameId,file){
+    if(!(await getGame(gameId)))throw new Error("Spiel wurde nicht gefunden.");
+    if((await this.listAttachments(gameId)).length>=MAX_ATTACHMENTS_PER_GAME)throw new Error("Maximal 15 Anhänge pro Spiel.");
+    const mime=await validateFile(file);
+    const row={id:id(),game_id:gameId,filename:safeFilename(file.name,mime),mime_type:mime,kind:mime==="application/pdf"?"rules":"image",size:file.size,created_at:nowIso(),blob:new Blob([file],{type:mime})};
+    await putAttachment(row);return metadata(row);
+  }
+  async getAttachmentBlob(gameId,attachmentId){const row=await getAttachment(attachmentId);if(!row||row.game_id!==gameId)throw new Error("Anhang wurde nicht gefunden.");return row.blob;}
+  async removeAttachment(gameId,attachmentId){return deleteAttachment(gameId,attachmentId);}
+  async exportData(){
+    const rows=[];
+    for(const a of await getAllAttachments())rows.push({...metadata(a),content_base64:await blobToBase64(a.blob)});
+    return backupFromGames(await this.list(),{source:"local"},rows);
+  }
+  async previewImport(backup){validateBackup(backup);const files=await decodeAttachments(backup);return {...previewAgainst(await this.list(),backup.data.games.map(cleanGame)),attachments:files.length};}
+  async importData(backup,strategy="merge"){
+    validateBackup(backup);if(!["merge","replace"].includes(strategy))throw new Error("Unbekannte Importstrategie.");
+    const games=backup.data.games.map(cleanGame),attachments=await decodeAttachments(backup);
+    await importGamesAndAttachments(games,attachments,strategy);
+    return {imported:games.length,attachments:attachments.length,strategy};
+  }
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"6.0.0",ai_import_enabled:false,rules_search_enabled:false,ai_provider:"none",ai_model:"",rules_search_provider:"none"};}
 }
 
 export class ServerProvider{
@@ -51,14 +134,30 @@ export class ServerProvider{
       if(text&&!body)throw new Error("Der Server hat eine ungültige Antwort geliefert.");return body;
     }catch(err){if(err.name==="AbortError")throw new Error("Zeitüberschreitung beim Serverzugriff.");if(err instanceof TypeError)throw new Error("Server nicht erreichbar oder Anfrage durch CORS/Cloudflare blockiert.");throw err;}finally{clearTimeout(timer);}
   }
+  async blobRequest(path){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);
+    try{
+      const res=await fetch(this.url(path),{headers:this.headers(),signal:controller.signal,credentials:this.baseUrl?"omit":"same-origin",cache:"no-store"});
+      if(!res.ok){let data={};try{data=await res.json();}catch{}throw new Error(data.error||`Datei konnte nicht geladen werden (${res.status}).`);}
+      return await res.blob();
+    }finally{clearTimeout(timer);}
+  }
+  listAttachments(gameId){return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments`);}
+  async addAttachment(gameId,file){
+    await validateFile(file);
+    const form=new FormData();form.append("file",file,file.name);
+    return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments`,{method:"POST",body:form,timeoutMs:120000});
+  }
+  getAttachmentBlob(gameId,attachmentId){return this.blobRequest(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`);}
+  removeAttachment(gameId,attachmentId){return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`,{method:"DELETE"});}
   list(){return this.request("/api/games");}
   get(id){return this.request(`/api/games/${encodeURIComponent(id)}`);}
   create(data){return this.request("/api/games",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});}
   update(id,data){return this.request(`/api/games/${encodeURIComponent(id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});}
   remove(id){return this.request(`/api/games/${encodeURIComponent(id)}`,{method:"DELETE"});}
-  exportData(){return this.request("/api/export");}
-  previewImport(backup){return this.request("/api/import/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({backup})});}
-  importData(backup,strategy="merge"){return this.request("/api/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({backup,strategy})});}
+  exportData(){return this.request("/api/export",{timeoutMs:120000});}
+  previewImport(backup){return this.request("/api/import/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({backup}),timeoutMs:120000});}
+  importData(backup,strategy="merge"){return this.request("/api/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({backup,strategy}),timeoutMs:180000});}
   config(){return this.request("/api/config");}
   health(){return this.request("/health");}
   aiStatus(){return this.request("/api/ai/status",{timeoutMs:15000});}

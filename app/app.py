@@ -2,9 +2,10 @@ import os
 import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, send_file
+from io import BytesIO
 
-from . import db
+from . import db, attachments
 from .ai_import import import_from_url, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 
@@ -14,7 +15,7 @@ STATIC_DIR = APP_DIR / "static"
 
 def create_app(test_config=None):
     app = Flask(__name__, static_folder=None)
-    app.config.update(MAX_CONTENT_LENGTH=4 * 1024 * 1024, SECRET_KEY=os.environ.get("SECRET_KEY", "change-me"))
+    app.config.update(MAX_CONTENT_LENGTH=100 * 1024 * 1024, SECRET_KEY=os.environ.get("SECRET_KEY", "change-me"))
     if test_config:
         app.config.update(test_config)
     db.init_db()
@@ -45,7 +46,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="4.0.0",
+            version="6.0.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -80,7 +81,11 @@ def create_app(test_config=None):
         existing = db.get_game(game_id)
         if not existing: return jsonify(error="Spiel wurde nicht gefunden."), 404
         if request.method == "GET": return jsonify(existing)
-        if request.method == "DELETE": db.delete_game(game_id); return jsonify(status="deleted")
+        if request.method == "DELETE":
+            ids = [a["id"] for a in db.list_attachments(game_id)]
+            db.delete_game(game_id)
+            for attachment_id in ids: attachments.remove_file(attachment_id)
+            return jsonify(status="deleted")
         payload = request.get_json(silent=True) or {}
         payload["id"] = game_id
         try: game = db.normalize_game(payload, existing)
@@ -88,6 +93,50 @@ def create_app(test_config=None):
         game["id"] = game_id
         db.save_game(game)
         return jsonify(game)
+
+
+    @app.route("/api/games/<game_id>/attachments", methods=["GET", "POST", "OPTIONS"])
+    def game_attachments(game_id):
+        if request.method == "OPTIONS": return ("", 204)
+        if not db.get_game(game_id): return jsonify(error="Spiel wurde nicht gefunden."), 404
+        if request.method == "GET": return jsonify(db.list_attachments(game_id))
+        if len(db.list_attachments(game_id)) >= attachments.MAX_FILES_PER_GAME:
+            return jsonify(error="Maximal 15 Anhänge pro Spiel erlaubt."), 400
+        uploaded = request.files.get("file")
+        if not uploaded: return jsonify(error="Bitte eine Datei auswählen."), 400
+        content = uploaded.stream.read(attachments.MAX_FILE_BYTES + 1)
+        try:
+            record = attachments.make_record(game_id, uploaded.filename, content)
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        try:
+            attachments.write_file(record, content)
+            db.add_attachment(record)
+        except ValueError as exc:
+            attachments.remove_file(record["id"])
+            return jsonify(error=str(exc)), 400
+        except Exception:
+            attachments.remove_file(record["id"])
+            raise
+        return jsonify(record), 201
+
+    @app.route("/api/games/<game_id>/attachments/<attachment_id>", methods=["GET", "DELETE", "OPTIONS"])
+    def game_attachment_item(game_id, attachment_id):
+        if request.method == "OPTIONS": return ("", 204)
+        meta = db.get_attachment(game_id, attachment_id)
+        if not meta: return jsonify(error="Anhang wurde nicht gefunden."), 404
+        if request.method == "DELETE":
+            db.delete_attachment(game_id, attachment_id)
+            attachments.remove_file(attachment_id)
+            return jsonify(status="deleted")
+        try:
+            content = attachments.read_file(attachment_id)
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 404
+        response = send_file(BytesIO(content), mimetype=meta["mime_type"], as_attachment=True,
+                             download_name=meta["filename"], max_age=0)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     @app.route("/api/export", methods=["GET", "OPTIONS"])
     def export_all():

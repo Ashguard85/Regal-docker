@@ -41,12 +41,12 @@
           </div>
         </div>
         <label class="search-box"><span class="sr-only">Sammlung durchsuchen</span><span class="search-icon" aria-hidden="true"></span><input id="searchInput" type="search" placeholder="Titel, Verlag, Autor oder Tag suchen …" autocomplete="off"></label>
-        <div class="collection-toolbar" aria-label="Ansicht wählen">
-          <div class="view-toggle" role="tablist" aria-label="Sammlungsansicht">
-            <button id="viewListButton" class="view-pill active" type="button" role="tab" aria-selected="true">Liste</button>
-            <button id="viewShelfButton" class="view-pill" type="button" role="tab" aria-selected="false">Regal</button>
+        <div class="collection-toolbar" aria-label="Sammlungsansicht wählen">
+          <div class="view-toggle" role="group" aria-label="Sammlungsansicht">
+            <button id="viewListButton" class="view-pill active" type="button" aria-pressed="true">Liste</button>
+            <button id="viewShelfButton" class="view-pill" type="button" aria-pressed="false">Regal</button>
           </div>
-          <p class="collection-subhint">Mit Covers wirkt deine Sammlung wie ein echtes kleines Regal.</p>
+          <p class="collection-subhint">Eigene Bilder und Anleitungen direkt am Spiel speichern.</p>
         </div>
         <div id="statusBanner" class="status-banner hidden" role="status"></div>
         <div id="gameList" class="game-list"></div>
@@ -94,15 +94,15 @@
             <button id="localToServerButton" class="button">Lokale Daten auf Server übertragen</button>
             <button id="serverToLocalButton" class="button">Serverdaten lokal übernehmen</button>
           </div>
-          <p class="hint">Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 2. v1-Backups bleiben importierbar. Zugangsdaten sind nie enthalten.</p>
+          <p class="hint">Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 3, einschließlich hochgeladener Bilder und PDF-Anleitungen. Ältere Backups bleiben importierbar. Bei vielen Anhängen kann die JSON-Datei groß werden. Zugangsdaten sind nie enthalten.</p>
         </div></details>
 
         <details><summary>Sicherheit & lokale Daten</summary><div class="details-body">
-          <p>Lokale Daten liegen nur auf diesem Gerät. Beim Löschen der PWA, der Website-Daten oder bei Geräteverlust können sie verloren gehen.</p>
+          <p>Lokale Spiele und Anhänge liegen in IndexedDB auf diesem Gerät. Beim Löschen der PWA, der Website-Daten oder bei Geräteverlust können sie verloren gehen. Im Docker-Modus liegen die Anhänge unter <code>/app/data/attachments</code>; sichere das gesamte Datenvolume.</p>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">4.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">6.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -112,7 +112,7 @@
     </nav>
   </div>
 
-  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Spielansicht</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><button id="detailOpenSourceButton" type="button" class="button hidden">Quelle öffnen</button><button id="detailOpenRulesButton" type="button" class="button hidden">Anleitung öffnen</button><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div></div></dialog>
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 
   <dialog id="gameDialog" class="dialog">
     <form id="gameForm" method="dialog" class="dialog-card">
@@ -134,6 +134,14 @@
         <label class="full">Auszeichnung<input id="awardInput" maxlength="500" placeholder="z. B. Spiel des Jahres 2024"></label>
         <label class="full">Coverbild-Link<input id="coverUrlInput" type="url" inputmode="url" placeholder="https://…/cover.jpg"></label>
         <div id="coverPreview" class="full cover-preview hidden"></div>
+        <div class="full attachment-editor">
+          <strong>Bilder und Anleitungen als Dateien</strong>
+          <p class="hint">JPG, PNG, GIF, WebP, HEIC/HEIF und PDF – bis 10 MB pro Datei, maximal 15 pro Spiel. Eigene Bilder können als Cover verwendet werden. Dateien werden beim Speichern hochgeladen.</p>
+          <label class="button file-button">＋ Bilder / PDF auswählen<input id="gameAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label>
+          <div id="pendingAttachmentList" class="attachment-editor-list"></div>
+          <div id="existingAttachmentList" class="attachment-editor-list"></div>
+          <p id="attachmentFormStatus" class="hint" role="status"></p>
+        </div>
         <label class="full">Tags<input id="tagsInput" placeholder="Familie, Karten, Koop"></label>
         <label class="full">Anleitungs-Link<input id="rulesUrlInput" type="url" inputmode="url" placeholder="https://…/anleitung.pdf"></label>
         <label class="full">Anleitung / Kurzregeln<textarea id="rulesTextInput" rows="6" maxlength="12000"></textarea></label>

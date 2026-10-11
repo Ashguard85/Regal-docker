@@ -1,6 +1,1 @@
-window.APP_CONFIG = {
-  buildTarget: "shared",
-  version: "5.0.0",
-  defaultApiUrl: "",
-  allowLocalMode: true
-};
+window.APP_CONFIG = {buildTarget:"docker",version:"6.0.0",defaultApiUrl:"",allowLocalMode:false};

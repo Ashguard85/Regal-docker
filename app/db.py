@@ -7,14 +7,14 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 2
-BACKUP_VERSION = 2
-SUPPORTED_BACKUP_VERSIONS = {1, 2}
+SCHEMA_VERSION = 3
+BACKUP_VERSION = 3
+SUPPORTED_BACKUP_VERSIONS = {1, 2, 3}
 
 GAME_COLUMNS = [
     "id", "title", "description", "source_url", "rules_url", "rules_text",
     "min_players", "max_players", "play_time_min", "min_age", "publisher", "year",
-    "designer", "ean", "cover_url", "award", "tags_json", "notes", "created_at", "updated_at"
+    "designer", "ean", "cover_url", "award", "cover_attachment_id", "tags_json", "notes", "created_at", "updated_at"
 ]
 
 
@@ -81,6 +81,24 @@ def init_db():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_games_ean ON games(ean)")
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (2, utcnow()))
 
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 3 not in applied:
+            if "cover_attachment_id" not in _columns(conn, "games"):
+                conn.execute("ALTER TABLE games ADD COLUMN cover_attachment_id TEXT NOT NULL DEFAULT ''")
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id TEXT PRIMARY KEY,
+                    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_attachments_game ON attachments(game_id);
+            """)
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (3, utcnow()))
+
 
 def _int_or_none(value, minimum=None, maximum=None):
     if value in (None, ""):
@@ -130,6 +148,7 @@ def normalize_game(raw, existing=None):
         "ean": _text(raw, existing, "ean", 32),
         "cover_url": _text(raw, existing, "cover_url", 2000),
         "award": _text(raw, existing, "award", 500),
+        "cover_attachment_id": _text(raw, existing, "cover_attachment_id", 80),
         "tags": tags[:30],
         "notes": _text(raw, existing, "notes", 6000),
         "created_at": str(existing.get("created_at") or raw.get("created_at") or now),
@@ -145,19 +164,64 @@ def row_to_game(row):
         d["tags"] = json.loads(d.pop("tags_json") or "[]")
     except json.JSONDecodeError:
         d["tags"] = []
-    for key in ("designer", "ean", "cover_url", "award"):
+    for key in ("designer", "ean", "cover_url", "award", "cover_attachment_id"):
         d.setdefault(key, "")
     return d
 
 
+def _attachments_for(conn, game_id=None):
+    if game_id is None:
+        rows = conn.execute("SELECT * FROM attachments ORDER BY created_at, id").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM attachments WHERE game_id=? ORDER BY created_at, id", (game_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_attachments(game_id):
+    with connect() as conn:
+        return _attachments_for(conn, game_id)
+
+
+def get_attachment(game_id, attachment_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM attachments WHERE id=? AND game_id=?", (attachment_id, game_id)).fetchone()
+        return dict(row) if row else None
+
+
+def add_attachment(record):
+    with connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM attachments WHERE game_id=?", (record["game_id"],)).fetchone()[0]
+        if count >= 15:
+            raise ValueError("Maximal 15 Anhänge pro Spiel erlaubt.")
+        conn.execute("INSERT INTO attachments(id,game_id,filename,mime_type,kind,size,created_at) VALUES (:id,:game_id,:filename,:mime_type,:kind,:size,:created_at)", record)
+    return record
+
+
+def delete_attachment(game_id, attachment_id):
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM attachments WHERE id=? AND game_id=?", (attachment_id, game_id)).fetchone()
+        if not row: return False
+        conn.execute("DELETE FROM attachments WHERE id=? AND game_id=?", (attachment_id, game_id))
+        conn.execute("UPDATE games SET cover_attachment_id='' WHERE id=? AND cover_attachment_id=?", (game_id, attachment_id))
+        return True
+
+
 def list_games():
     with connect() as conn:
-        return [row_to_game(r) for r in conn.execute("SELECT * FROM games ORDER BY title COLLATE NOCASE")]
+        games = [row_to_game(r) for r in conn.execute("SELECT * FROM games ORDER BY title COLLATE NOCASE")]
+        grouped = {}
+        for att in _attachments_for(conn):
+            grouped.setdefault(att["game_id"], []).append(att)
+        for game in games:
+            game["attachments"] = grouped.get(game["id"], [])
+        return games
 
 
 def get_game(game_id):
     with connect() as conn:
-        return row_to_game(conn.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone())
+        game = row_to_game(conn.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone())
+        if game: game["attachments"] = _attachments_for(conn, game_id)
+        return game
 
 
 def _db_values(game):
@@ -166,12 +230,16 @@ def _db_values(game):
     return values
 
 
+def _upsert_game(conn, game):
+    columns = ','.join(GAME_COLUMNS)
+    placeholders = ','.join('?' for _ in GAME_COLUMNS)
+    changes = ','.join(f'{col}=excluded.{col}' for col in GAME_COLUMNS if col != 'id')
+    conn.execute(f"INSERT INTO games ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {changes}", _db_values(game))
+
+
 def save_game(game):
     with connect() as conn:
-        conn.execute(
-            f"INSERT OR REPLACE INTO games ({','.join(GAME_COLUMNS)}) VALUES ({','.join('?' for _ in GAME_COLUMNS)})",
-            _db_values(game),
-        )
+        _upsert_game(conn, game)
     return game
 
 
@@ -206,12 +274,20 @@ def rotate_backups():
 
 
 def backup_payload(source="server"):
+    import base64
+    from . import attachments as files
+    all_games = list_games()
+    items = []
+    for game in all_games:
+        for meta in game.pop("attachments", []):
+            content = files.read_file(meta["id"])
+            items.append({**meta, "content_base64": base64.b64encode(content).decode("ascii")})
     return {
         "format": "brettspielregal-backup",
         "version": BACKUP_VERSION,
         "exported_at": utcnow(),
         "meta": {"source": source, "schema_version": SCHEMA_VERSION},
-        "data": {"games": list_games(), "settings": {}},
+        "data": {"games": all_games, "attachments": items, "settings": {}},
     }
 
 
@@ -235,11 +311,14 @@ def validate_backup(backup):
 def _comparable(game):
     x = dict(game)
     x.pop("updated_at", None)
+    x.pop("attachments", None)
     return json.dumps(x, sort_keys=True, ensure_ascii=False)
 
 
 def preview_import(backup):
     incoming = validate_backup(backup)
+    from . import attachments as files
+    incoming_files = files.decode_backup_attachments(backup, {g["id"] for g in incoming})
     current = {g["id"]: g for g in list_games()}
     fresh = conflicts = same = 0
     for g in incoming:
@@ -250,20 +329,34 @@ def preview_import(backup):
             same += 1
         else:
             conflicts += 1
-    return {"total": len(incoming), "new": fresh, "conflicts": conflicts, "same": same}
+    return {"total": len(incoming), "attachments": len(incoming_files), "new": fresh, "conflicts": conflicts, "same": same}
 
 
 def import_backup(backup, strategy="merge"):
+    from . import attachments as files
     games = validate_backup(backup)
     if strategy not in {"merge", "replace"}:
         raise ValueError("Unbekannte Importstrategie.")
+    incoming_files = files.decode_backup_attachments(backup, {g["id"] for g in games})
     make_backup("before-import")
+    # Store files first; database entries are only inserted after successful writes.
+    # Replacing a backup can overwrite files with the same UUID; users should retain
+    # an external copy of the JSON backup before importing.
+    existing_ids = set()
+    if strategy == "replace":
+        with connect() as conn:
+            existing_ids = {r[0] for r in conn.execute("SELECT id FROM attachments")}
+    new_ids = {r["id"] for r, _ in incoming_files}
+    for record, data in incoming_files:
+        files.write_file(record, data)
     with connect() as conn:
         if strategy == "replace":
             conn.execute("DELETE FROM games")
         for g in games:
-            conn.execute(
-                f"INSERT OR REPLACE INTO games ({','.join(GAME_COLUMNS)}) VALUES ({','.join('?' for _ in GAME_COLUMNS)})",
-                _db_values(g),
-            )
-    return {"imported": len(games), "strategy": strategy}
+            _upsert_game(conn, g)
+        for record, _ in incoming_files:
+            conn.execute("INSERT OR REPLACE INTO attachments(id,game_id,filename,mime_type,kind,size,created_at) VALUES (:id,:game_id,:filename,:mime_type,:kind,:size,:created_at)", record)
+    if strategy == "replace":
+        for attachment_id in existing_ids - new_ids:
+            files.remove_file(attachment_id)
+    return {"imported": len(games), "attachments": len(incoming_files), "strategy": strategy}
