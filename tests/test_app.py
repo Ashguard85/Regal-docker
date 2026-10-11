@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "6.0.0"
+        assert cfg["version"] == "7.0.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -64,4 +64,6 @@ def test_ai_endpoints_are_disabled_by_default():
         app = load_app(tmp)
         c = app.test_client()
         assert c.post("/api/ai/from-url", json={"url":"https://example.com"}).status_code == 503
+        assert c.post("/api/ai/from-text", json={"text":"Titel: Azul"}).status_code == 503
+        assert c.post("/api/ai/from-image").status_code == 503
         assert c.post("/api/ai/rules-search", json={"game":{"title":"Azul"}}).status_code == 503

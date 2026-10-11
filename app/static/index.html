@@ -82,6 +82,7 @@
         <details><summary>KI / Link-Auswertung</summary><div class="details-body stack">
           <p>Aktiver Server-KI-Anbieter: <strong id="aiProviderLabel">–</strong></p>
           <p id="aiModelLabel" class="muted"></p>
+          <p id="aiVisionModelLabel" class="muted"></p>
           <p id="aiSearchLabel" class="muted"></p>
           <button id="testAiButton" class="button" type="button">KI-Verbindung testen</button>
           <p class="hint">Ollama wird ausschließlich vom Docker-Backend angesprochen. Die GitHub-Pages-PWA verbindet sich niemals direkt mit Port 11434. Im lokalen Pages-Modus wird keine KI verwendet.</p>
@@ -102,7 +103,7 @@
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">6.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">7.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -121,7 +122,7 @@
       <div class="form-grid">
         <label class="full">Titel *<input id="titleInput" required maxlength="180"></label>
         <label class="full">Quell-Link<input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://…"></label>
-        <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Server-Modus; KI läuft nur im Docker-Backend</span></div>
+        <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="aiImageButton" type="button" class="button">Screenshot auslesen</button><input id="aiImageInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Text/Link: Qwen · Screenshot/Bild: Gemma Vision · maximal 4 Bilder</span></div>
         <label class="full">Beschreibung<textarea id="descriptionInput" rows="4" maxlength="6000"></textarea></label>
         <label>Spieler min.<input id="minPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>
         <label>Spieler max.<input id="maxPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>

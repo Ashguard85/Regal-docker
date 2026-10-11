@@ -1,10 +1,33 @@
-# Testbericht – Brettspielregal v6.0.0
+# Testbericht – Brettspielregal v7.0.0
 
-- `node --check` für `app.js`, `providers.js`, `db.js`, `config.js`, `service-worker.js`: bestanden.
-- HTML/JavaScript-ID-Abgleich: keine fehlenden Elemente.
-- Python-Tests ohne Flask (KI, Provider, SQLite-Migration, Backup, Anhänge): **13 bestanden**.
-- Direkter Test von SQLite-Upload-Metadaten, Dateiablage, JSON-Export/Import, Merge und Replace: bestanden.
-- Chromium-UI-Smoke-Test mit simuliertem Server: Liste, Regalansicht, Detaildialog, Bild- und PDF-Anhang, Datei hinzufügen, Cover wechseln, Datei löschen und Bearbeiten; keine JavaScript-Ausnahme.
-- Node-Smoke-Test des LocalProvider mit simuliertem IndexedDB-Speicher: Dateien hinzufügen, herunterladen, Export/Import (v3), Legacy-Merge/Replace und ungültige Dateitypen; bestanden.
-- Neue Flask-API-Tests für Datei-Upload, Download, Löschen und Backup sind enthalten, konnten in der aktuellen Testumgebung aber **nicht ausgeführt** werden, da Flask hier nicht installiert und ein Paketdownload nicht verfügbar ist. Vor Produktivbetrieb bitte mit `pip install -r requirements-dev.txt && PYTHONPATH=. pytest -q` ausführen.
-- Docker und Pages erhalten identische Frontend-Dateien außer der zielabhängigen `config.js`.
+## Erfolgreich geprüft
+
+- JavaScript-Syntax: `app.js`, `providers.js`, `service-worker.js`
+- Python-Syntax: alle Module unter `app/`
+- DOM-Abgleich: alle per `$()` referenzierten IDs sind in `index.html` vorhanden
+- Docker `frontend/` ↔ `app/static/` Parität (außer zielabhängiger `config.js`)
+- Docker ↔ GitHub-Pages-Frontend Parität der gemeinsamen Dateien
+- Service Worker: `brettspielregal-pwa-v7`
+- Separates Textmodell (`OLLAMA_TEXT_MODEL`) und Vision-Modell (`OLLAMA_VISION_MODEL`)
+- Ollama-Vision-Anfrage enthält `images` und verwendet das konfigurierte Vision-Modell
+- Magic-/Textimport und Screenshot-Import verwenden keinen direkten Abruf der gespeicherten Quell-URL
+- Anhang-/Backup-/Datenbanktests im verfügbaren Testumfang
+
+## Pytest
+
+17 Tests bestanden:
+
+```text
+17 passed
+```
+
+Geprüfte Bereiche: AI-Import, AI-Provider, Vision-Modell, Datenbank-Migration/Import und Dateispeicher.
+
+Die 6 Flask-basierten API-/Integrations-Tests konnten in dieser Build-Umgebung nicht gestartet werden, weil das Python-Paket `flask` hier nicht installiert ist (`ModuleNotFoundError: No module named 'flask'`). Das Docker-Image installiert Flask regulär über `requirements.txt`.
+
+## Nicht als echter Integrationstest ausgeführt
+
+- realer Ollama-Host mit `qwen3:14b`
+- realer Ollama-Host mit `gemma3:12b`
+- echtes Portainer-Deployment
+- iPhone/PWA auf physischem Gerät

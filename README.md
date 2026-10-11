@@ -1,35 +1,80 @@
-# Brettspielregal – Docker Fullstack v6.0.0
+# Brettspielregal – Docker Fullstack v7.0.0
 
-Brettspiel-Sammlung als responsive PWA mit Docker/Flask/SQLite und optional Ollama. **Docker v6 und GitHub Pages v6 gehören zusammen.** Die bestehenden Funktionen aus v4/v5 (KI-/Link-Import, Backup, Suche, Regalansicht, Detailansicht) bleiben erhalten.
+Brettspiel-Sammlung als responsive PWA mit Docker/Flask/SQLite, Dateianhängen und lokalem Ollama. **Docker v7 und GitHub Pages v7 gehören zusammen.**
 
-## Neu: Eigene Bilder und Anleitungen als Anhänge
+## Neu in v7: zwei lokale Ollama-Modelle
 
-- In **Spiel bearbeiten / Spiel erfassen** unter „Bilder und Anleitungen als Dateien“ Dateien auswählen. Bei einem neuen Spiel werden sie nach dem Speichern des Spiels hochgeladen.
-- In der **Spiel-Detailansicht** lassen sich Dateien direkt hinzufügen, ansehen, herunterladen oder löschen. Ein hochgeladenes Bild kann als Cover markiert werden; das erste hochgeladene Bild wird sonst automatisch als Cover genutzt.
-- **Dateitypen:** JPG/JPEG, PNG, GIF, WebP, HEIC/HEIF und PDF. Maximal **10 MB pro Datei**, **15 Anhänge pro Spiel**. HEIC/HEIF-Vorschauen hängen vom Browser ab; die Datei kann trotzdem gespeichert und heruntergeladen werden.
-- Der bisherige externe Cover-Link und der Anleitungs-Link bleiben optional nutzbar. Lokale Cover-Dateien werden bevorzugt angezeigt.
-- Die **Regalansicht** aus v5 ist weiterhin per Umschalter „Liste / Regal“ verfügbar.
+- **Text-/Link-Import:** standardmäßig `qwen3:14b`.
+- **Screenshot-/Bild-Import:** standardmäßig `gemma3:12b` über Ollama Vision.
+- In „Spiel erfassen / bearbeiten“ gibt es **Screenshot auslesen**. Bis zu 4 JPG/PNG/WebP-Bilder können gemeinsam ausgewertet werden.
+- Produktlinks, die der Server wegen HTTP 403 nicht abrufen kann (z. B. manche Shopseiten), können über einen vorbereiteten **Magic Import Link** oder über Screenshots importiert werden. Die App versucht nicht, den Bot-Schutz des Shops zu umgehen.
+- Magic Import Links verwenden `#import=<base64url-json>` mit Version 1. Im Server-Modus wird der enthaltene Text mit Ollama strukturiert; optionale Fallback-Daten funktionieren auch ohne KI.
+- Bilder für die KI-Auswertung werden nur transient an dein lokales Ollama gesendet und von der Importfunktion nicht gespeichert. Normale Bilder/PDF-Anleitungen bleiben wie in v6 als Anhänge speicherbar.
 
-## Speicherung und Backups
+## Ollama vorbereiten
 
-- **Docker/Server:** SQLite unter `/app/data/app.sqlite`, Anhänge unter `/app/data/attachments/` (Dateiname intern eine UUID). Den bestehenden Volume-Mount **nicht verändern** und für ein vollständiges Server-Backup **das gesamte `/app/data`-Verzeichnis** sichern.
-- **Pages/Lokal:** Spiele und Anhang-Dateien in IndexedDB auf dem jeweiligen Gerät. Sie sind nicht automatisch auf anderen Geräten verfügbar.
-- **JSON-Export:** Backup-Format `brettspielregal-backup`, **Version 3**, mit `data.games`, `data.attachments` und `data.settings`. Die Anhänge sind als Base64 enthalten. Export/Import sowie Lokal↔Server-Übertragungen übernehmen jetzt die Dateien. Backups werden dadurch deutlich größer.
-- **Ältere Backups v1/v2** bleiben importierbar, enthalten aber noch keine Anhänge. „Zusammenführen“ behält vorhandene Anhänge, „Ersetzen“ entfernt den bisherigen Bestand einschließlich seiner Anhänge.
-- Die rotierenden automatischen **SQLite**-Snapshots unter `/app/data/backups/` enthalten **keine Bild-/PDF-Dateien**. Für eine vollständige Wiederherstellung JSON-Export oder das gesamte Datenvolume sichern.
-- Bei sehr vielen Anhängen kann die Größe des JSON-Imports das serverseitige Anfrage-Limit (100 MB) überschreiten. Große Sammlungen besser über das vollständige Docker-Datenvolume sichern.
+Auf dem Rechner, auf dem Ollama läuft:
 
-## Update von v4/v5 auf v6
+```bash
+ollama pull qwen3:14b
+ollama pull gemma3:12b
+ollama list
+```
 
-1. Vor dem Update ein JSON-Backup erstellen und bei Docker möglichst das komplette Datenvolume sichern.
-2. Docker v6 neu deployen, den bestehenden Mount `/app/data` unverändert lassen. SQLite migriert automatisch von Schema 2 auf Schema 3.
-3. Bei GitHub Pages das Pages-v6-Frontend deployen. Der IndexedDB-Speicher migriert automatisch von Version 2 auf 3.
-4. PWA/Browser neu öffnen; der Service Worker verwendet `brettspielregal-pwa-v6`.
-5. Docker v6 und Pages v6 gemeinsam verwenden. Pages v6 mit einem alten Backend kann keine Dateien hochladen.
+Gemma 3 Vision benötigt eine aktuelle Ollama-Version. Danach sollte `ollama list` beide Modelle zeigen.
 
-## Deployment
+### Empfohlene Portainer-Variablen
 
-Das Beispiel `docker-compose.example.yml` kann wie bisher für Portainer/Git verwendet werden. Wesentliche Werte:
+```yaml
+AI_IMPORT_ENABLED: "true"
+AI_PROVIDER: "ollama"
+OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+OLLAMA_TEXT_MODEL: "qwen3:14b"
+OLLAMA_VISION_MODEL: "gemma3:12b"
+OLLAMA_TIMEOUT_SECONDS: "600"
+AI_MAX_PAGE_CHARS: "16000"
+RULE_SEARCH_PROVIDER: "none"
+WEB_FALLBACK_PROVIDER: "none"
+```
+
+`OLLAMA_MODEL` wird aus Kompatibilitätsgründen weiterhin als Alias für das Textmodell akzeptiert. Für neue Installationen `OLLAMA_TEXT_MODEL` verwenden.
+
+## Nutzung des Screenshot-Imports
+
+1. Spiel hinzufügen oder bearbeiten.
+2. Optional den ursprünglichen Produktlink bei **Quell-Link** eintragen. Er wird beim Screenshot-Import nur gespeichert, nicht abgerufen.
+3. **Screenshot auslesen** drücken.
+4. 1–4 Screenshots oder Fotos als JPG, PNG oder WebP auswählen (max. 10 MB pro Bild, zusammen max. 30 MB).
+5. Gemma 3 liest die sichtbaren Angaben aus und zeigt eine Import-Vorschau.
+6. **Vorschläge übernehmen** drücken und das Spiel speichern.
+
+HEIC/HEIF ist weiterhin als normaler Spielanhang erlaubt, für die KI-Auswertung aber bewusst nicht freigeschaltet, weil die Ollama-Vision-Pipeline diese Formate nicht zuverlässig auf allen Hosts dekodiert. iPhone-Screenshots sind üblicherweise PNG und funktionieren direkt.
+
+## KI-Verbindung prüfen
+
+Unter **Setup → KI / Link-Auswertung → KI-Verbindung testen** zeigt v7 getrennt an, ob Textmodell und Bildmodell auf dem Ollama-Host vorhanden sind.
+
+## Bestehende Bilder und PDF-Anleitungen
+
+Die v6-Anhangsfunktion bleibt erhalten:
+
+- JPG/JPEG, PNG, GIF, WebP, HEIC/HEIF und PDF
+- bis 10 MB pro Datei
+- maximal 15 Anhänge pro Spiel
+- Bild als Cover auswählbar
+- Docker: Dateien unter `/app/data/attachments/`
+- Pages/Lokal: Dateien in IndexedDB
+- JSON-Backup-Format Version 3 enthält Anhänge als Base64
+
+## Update von v6 auf v7
+
+1. Vorher JSON-Backup und bei Docker möglichst das komplette Datenvolume sichern.
+2. v7 neu deployen und `/app/data` unverändert weiterverwenden. Für v7 ist **keine neue Datenbankmigration** nötig.
+3. Beide Ollama-Modelle laden.
+4. Docker und Pages gemeinsam auf v7 aktualisieren.
+5. PWA neu öffnen; der Service Worker heißt `brettspielregal-pwa-v7`.
+
+## Beispiel für Portainer / Docker Compose
 
 ```yaml
 services:
@@ -37,36 +82,38 @@ services:
     build:
       context: https://github.com/USER/brettspielregal.git#main
     ports:
-      - "8090:8080"
+      - "8190:8080"
     volumes:
       - /home/USER/docker/brettspielregal/data:/app/data
+      - /home/USER/docker/brettspielregal/backups:/app/data/backups
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      APP_TITLE: Brettspielregal
-      APP_URL: https://api.example.com
-      SECRET_KEY: ${SECRET_KEY}
-      PWA_ALLOWED_ORIGIN: https://app.example.com
+      APP_TITLE: "Brettspielregal"
+      APP_URL: "http://192.168.1.127:8190"
+      SECRET_KEY: "${SECRET_KEY}"
+      PWA_ALLOWED_ORIGIN: "http://192.168.1.127:8190"
       BACKUP_KEEP: "50"
       AI_IMPORT_ENABLED: "true"
-      AI_PROVIDER: ollama
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: qwen3:8b
-      RULE_SEARCH_PROVIDER: none
-      WEB_FALLBACK_PROVIDER: none
+      AI_PROVIDER: "ollama"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_TEXT_MODEL: "qwen3:14b"
+      OLLAMA_VISION_MODEL: "gemma3:12b"
+      OLLAMA_TIMEOUT_SECONDS: "600"
+      AI_MAX_PAGE_CHARS: "16000"
+      RULE_SEARCH_PROVIDER: "none"
+      WEB_FALLBACK_PROVIDER: "none"
     restart: unless-stopped
 ```
 
-Liegt der Docker-Code im Repository-Unterordner `docker`, beim Git-Build `#main:docker` verwenden. Ollama bleibt ausschließlich serverseitig; Port `11434` nicht öffentlich freigeben.
+Ollama-Port 11434 nicht öffentlich freigeben. Auf Linux muss Ollama Verbindungen aus dem Docker-Netz erreichen können.
 
-## API-Erweiterung
+## Neue API-Routen
 
-Zusätzlich zu den bisherigen Routen:
+- `POST /api/ai/from-text` – vorbereiteten Text strukturiert importieren.
+- `POST /api/ai/from-image` – Multipart, Feld `images`, bis zu 4 JPG/PNG/WebP-Bilder; optional `source_url`.
 
-- `GET|POST /api/games/<game_id>/attachments` – Metadaten bzw. Datei-Upload als Multipart-Formular (`file`)
-- `GET|DELETE /api/games/<game_id>/attachments/<attachment_id>` – authentifizierter Download bzw. Löschen
-
-Dateien werden über die API mit denselben Cloudflare-Access-Service-Token-Headern wie andere Serveranfragen abgerufen. Dateitypen werden anhand der tatsächlichen Dateisignatur geprüft; keine HTML-/Skript-Uploads. Die API selbst setzt weiterhin eine passende Zugriffsabsicherung am Reverse Proxy / Cloudflare Access voraus. `PWA_ALLOWED_ORIGIN` erlaubt exakt eine Pages-Origin.
+Die bisherigen Routen und die Anhang-API bleiben unverändert.
 
 ## Tests
 
@@ -74,5 +121,3 @@ Dateien werden über die API mit denselben Cloudflare-Access-Service-Token-Heade
 pip install -r requirements-dev.txt
 PYTHONPATH=. pytest -q
 ```
-
-Die bestehenden KI-/DB-Tests sowie neue Datei-/Backup-/API-Tests liegen unter `tests/`.

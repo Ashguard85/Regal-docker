@@ -20,8 +20,10 @@ services:
       AI_IMPORT_ENABLED: "true"
       AI_PROVIDER: ollama
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: qwen3:8b
-      OLLAMA_TIMEOUT_SECONDS: "120"
+      OLLAMA_TEXT_MODEL: qwen3:14b
+      OLLAMA_VISION_MODEL: gemma3:12b
+      # OLLAMA_MODEL bleibt als Legacy-Alias unterstützt
+      OLLAMA_TIMEOUT_SECONDS: "600"
       AI_MAX_PAGE_CHARS: "16000"
 
       # Standard: keine externe Cloud-Websuche

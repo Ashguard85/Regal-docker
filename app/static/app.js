@@ -1,9 +1,9 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"6.0.0",defaultApiUrl:"",allowLocalMode:true};
-let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", rulesSearchProvider="none";
-let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[];
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"7.0.0",defaultApiUrl:"",allowLocalMode:true};
+let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none";
+let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
 const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
 
 const FIELD_MAP=[
@@ -30,6 +30,24 @@ function normalizeUrl(url){return (url||"").trim().replace(/\/$/,"");}
 function inputNumber(id){const v=$(id).value;return v===""?null:Number(v);}
 function safeHttpsUrl(value){try{const u=new URL(String(value||""));return u.protocol==="https:"?u.href:"";}catch{return "";}}
 function valueText(key,value){if(Array.isArray(value))return value.join(", ");if(value===null||value===undefined)return "";if(key==="play_time_min"&&value)return `${value} Min.`;if(key==="min_age"&&value!=="")return `ab ${value}`;return String(value);}
+function decodeBase64Url(value){
+  const clean=String(value||"").replace(/-/g,"+").replace(/_/g,"/");
+  const padded=clean+"=".repeat((4-clean.length%4)%4);
+  const bytes=Uint8Array.from(atob(padded),c=>c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+function readMagicImport(){
+  try{
+    const hash=new URLSearchParams(location.hash.startsWith("#")?location.hash.slice(1):location.hash);
+    const encoded=hash.get("import");if(!encoded)return null;
+    const payload=JSON.parse(decodeBase64Url(encoded));
+    if(payload?.v!==1||typeof payload.text!=="string"||!payload.text.trim()||payload.text.length>24000)throw new Error("Ungültige Importdaten.");
+    if(payload.source_url&& !safeHttpsUrl(payload.source_url))throw new Error("Ungültige Quell-URL im Import-Link.");
+    if(payload.fallback&&typeof payload.fallback!=="object")throw new Error("Ungültige Fallback-Daten im Import-Link.");
+    history.replaceState(null,"",location.pathname+location.search);
+    return {text:payload.text.trim(),source_url:payload.source_url||"",fallback:payload.fallback||null};
+  }catch(err){history.replaceState(null,"",location.pathname+location.search);showMessage("Import-Link ungültig",err.message||"Der Import-Link konnte nicht gelesen werden.");return null;}
+}
 
 async function makeServerProvider(){
   if(isDocker())return new ServerProvider("");
@@ -58,15 +76,18 @@ async function refreshConfig(){
     rulesSearchEnabled=!!c.rules_search_enabled;
     aiProvider=c.ai_provider||"none";
     aiModel=c.ai_model||"";
+    aiVisionModel=c.ai_vision_model||"";
     rulesSearchProvider=c.rules_search_provider||"none";
-  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";rulesSearchProvider="none";}
+  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";aiVisionModel="";rulesSearchProvider="none";}
   $("aiImportRow").classList.toggle("hidden",currentMode!=="server"||!aiEnabled);
   $("rulesSearchButton").disabled=!rulesSearchEnabled;
   $("rulesSearchButton").title=rulesSearchProvider==="openai"?"Offizielle Anleitung mit serverseitiger Websuche verifizieren":"Anleitungs-Link auf der Quellseite suchen; externe Websuche ist deaktiviert";
   $("aiProviderLabel").textContent=currentMode==="server"?(aiEnabled?aiProvider:"deaktiviert"):"keine KI im lokalen Modus";
-  $("aiModelLabel").textContent=currentMode==="server"&&aiEnabled&&aiModel?`Modell: ${aiModel}`:"";
+  $("aiModelLabel").textContent=currentMode==="server"&&aiEnabled&&aiModel?`Textmodell: ${aiModel}`:"";
+  $("aiVisionModelLabel").textContent=currentMode==="server"&&aiEnabled&&aiVisionModel?`Bildmodell: ${aiVisionModel}`:"";
   $("aiSearchLabel").textContent=currentMode==="server"&&aiEnabled?`Externe Anleitungs-Websuche: ${rulesSearchProvider==="openai"?"OpenAI":"aus"}`:"";
   $("testAiButton").disabled=currentMode!=="server"||!aiEnabled;
+  $("aiImageButton").disabled=currentMode!=="server"||!aiEnabled||aiProvider!=="ollama";
 }
 async function loadGames(){
   showBanner("");
@@ -298,6 +319,52 @@ function proposalDialog(data,warnings=[],options={}){
   });
 }
 
+async function processMagicImport(payload){
+  if(!payload)return;
+  let data=payload.fallback||{}, warnings=[];
+  let intro="Die vorbereiteten Produktdaten wurden aus dem Import-Link gelesen. Es wird noch nichts gespeichert.";
+  if(currentMode==="server"&&aiEnabled){
+    try{
+      const result=await provider.aiFromText(payload.text,payload.source_url);
+      data=result.game||data;warnings=Array.isArray(result.warnings)?result.warnings:[];
+      const providerName=result.ai_provider==="ollama"?"lokalem Ollama":result.ai_provider==="openai"?"OpenAI":"KI";
+      intro=`Der vorbereitete Datensatz wurde serverseitig mit ${providerName} ausgewertet. Galaxus selbst musste dafür nicht abgerufen werden. Es wird noch nichts gespeichert.`;
+    }catch(err){
+      if(!payload.fallback){showMessage("Import fehlgeschlagen",err.message);return;}
+      warnings=[`Ollama-Auswertung nicht möglich: ${err.message}`];
+      intro="Ollama konnte den vorbereiteten Datensatz nicht auswerten. Deshalb werden die mitgelieferten Fallback-Daten angezeigt.";
+    }
+  }else if(currentMode!=="server"){
+    warnings=["Im lokalen Modus wird Ollama nicht angesprochen. Die vorbereiteten Fallback-Daten werden direkt übernommen."];
+  }else if(!aiEnabled){
+    warnings=["Die serverseitige KI-Auswertung ist deaktiviert. Die vorbereiteten Fallback-Daten werden direkt angezeigt."];
+  }
+  if(payload.source_url&&!data.source_url)data.source_url=payload.source_url;
+  const apply=await proposalDialog(data,warnings,{title:"Import-Link erkannt",intro,applyLabel:"Spiel übernehmen"});
+  if(apply){openGame();applyProposal(data);}
+}
+
+async function aiImageImport(files){
+  files=[...files||[]];
+  $("aiImageInput").value="";
+  if(!files.length)return;
+  if(currentMode!=="server"){showMessage("Nur im Server-Modus","Der Screenshot-Import läuft ausschließlich über das Docker-Backend und dein lokales Ollama.");return;}
+  if(!aiEnabled||aiProvider!=="ollama"){showMessage("Ollama nicht aktiv","Für den Screenshot-Import muss AI_PROVIDER=ollama und AI_IMPORT_ENABLED=true gesetzt sein.");return;}
+  if(files.length>4){showMessage("Zu viele Bilder","Bitte maximal 4 Screenshots gleichzeitig auswählen.");return;}
+  const allowed=new Set(["image/jpeg","image/png","image/webp"]);
+  for(const file of files){
+    if(!allowed.has(file.type)){showMessage("Bildformat nicht unterstützt",`${file.name}: Für die KI-Auswertung bitte JPG, PNG oder WebP verwenden. HEIC kann weiterhin als normaler Anhang gespeichert werden.`);return;}
+    if(file.size<1||file.size>10*1024*1024){showMessage("Bild zu groß",`${file.name}: maximal 10 MB pro Bild.`);return;}
+  }
+  const btn=$("aiImageButton");setBusy(btn,true,"Lese Bilder …");
+  try{
+    const result=await provider.aiFromImages(files,$("sourceUrlInput").value.trim());
+    const d=result.game||{},warnings=Array.isArray(result.warnings)?result.warnings:[];
+    const apply=await proposalDialog(d,warnings,{title:"Screenshot erkannt",intro:`${files.length} Bild(er) wurden lokal mit ${aiVisionModel||"dem Ollama-Vision-Modell"} ausgewertet. Es wird noch nichts gespeichert.`,applyLabel:"Vorschläge übernehmen"});
+    if(apply)applyProposal(d);
+  }catch(err){showMessage("Screenshot konnte nicht ausgewertet werden",err.message);}finally{setBusy(btn,false);}
+}
+
 async function aiImport(){
   const url=$("sourceUrlInput").value.trim();if(!url){showMessage("Link fehlt","Bitte zuerst einen HTTPS-Link zur Spielseite eintragen.");return;}
   if(currentMode!=="server"){showMessage("Nur im Server-Modus","Die Link-Auswertung läuft bewusst serverseitig, damit kein KI-API-Schlüssel im Browser gespeichert werden muss.");return;}
@@ -364,8 +431,15 @@ async function testAi(){
   const b=$("testAiButton");setBusy(b,true,"Teste KI …");
   try{
     const result=await provider.aiStatus();
-    if(result.provider==="ollama"&&result.status==="model_missing")showMessage("Ollama erreichbar",`Ollama antwortet, aber das konfigurierte Modell ${result.model||""} wurde nicht gefunden. Lade das Modell auf dem Ollama-Host oder passe OLLAMA_MODEL an.`);
-    else showMessage("KI-Verbindung funktioniert",`${result.provider||aiProvider}${result.model?` · ${result.model}`:""} ist vom Docker-Backend erreichbar.`);
+    if(result.provider==="ollama"){
+      const missing=[];
+      if(!result.model_available)missing.push(`Textmodell ${result.model||aiModel}`);
+      if(!result.vision_model_available)missing.push(`Bildmodell ${result.vision_model||aiVisionModel}`);
+      if(missing.length)showMessage("Ollama erreichbar",`Ollama antwortet, aber folgende Modelle fehlen: ${missing.join(", ")}. Lade sie auf dem Ollama-Host mit „ollama pull …“.`);
+      else showMessage("KI-Verbindung funktioniert",`Text: ${result.model||aiModel}
+Bild: ${result.vision_model||aiVisionModel}
+Beide Modelle sind vom Docker-Backend erreichbar.`);
+    }else showMessage("KI-Verbindung funktioniert",`${result.provider||aiProvider}${result.model?` · ${result.model}`:""} ist vom Docker-Backend erreichbar.`);
   }catch(err){showMessage("KI-Verbindung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
 }
 
@@ -383,21 +457,23 @@ function bindEvents(){
   $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));
   $("gameAttachmentInput").addEventListener("change",e=>{addPendingFiles(e.target.files||[]);e.target.value="";});
   $("detailAttachmentInput").addEventListener("change",e=>addDetailFiles([...e.target.files||[]]));
-  $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
+  $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("aiImageButton").addEventListener("click",()=>$("aiImageInput").click());$("aiImageInput").addEventListener("change",e=>aiImageImport(e.target.files));$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
   $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
   const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
-  document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();}));
+  document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
   window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
 }
 
 async function init(){
   bindEvents();updateViewButtons();$("versionLabel").textContent=config.version;
+  pendingMagicImport=readMagicImport();
   if("serviceWorker" in navigator){navigator.serviceWorker.register("./service-worker.js").catch(()=>{});}
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){
     currentMode="local";provider=new LocalProvider();$("modeBadge").textContent="Lokal";await loadSetup();$("firstRunDialog").showModal();return;
   }
   try{await selectProvider();await refreshConfig();await loadGames();}catch(err){currentMode="server";$("modeBadge").textContent="Server";showBanner(err.message,"error");showView("setup");}
   await loadSetup();
+  if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}
 }
 init();

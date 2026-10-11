@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from urllib.parse import urlparse
@@ -53,10 +54,18 @@ def _ollama_base_url():
     return raw
 
 
-def _ollama_model():
-    model = os.environ.get("OLLAMA_MODEL", "qwen3:8b").strip()
+def _ollama_text_model():
+    # OLLAMA_MODEL bleibt als Rückwärtskompatibilität erhalten.
+    model = os.environ.get("OLLAMA_TEXT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen3:14b")).strip()
     if not model:
-        raise AIProviderError("OLLAMA_MODEL ist nicht gesetzt.")
+        raise AIProviderError("OLLAMA_TEXT_MODEL/OLLAMA_MODEL ist nicht gesetzt.")
+    return model
+
+
+def _ollama_vision_model():
+    model = os.environ.get("OLLAMA_VISION_MODEL", "gemma3:12b").strip()
+    if not model:
+        raise AIProviderError("OLLAMA_VISION_MODEL ist nicht gesetzt.")
     return model
 
 
@@ -98,23 +107,44 @@ def generate_structured(prompt, schema, system=None):
     if provider == "none":
         raise AIProviderError("KI-Auswertung ist deaktiviert (AI_PROVIDER=none).")
     if provider == "ollama":
-        return _ollama_structured(prompt, schema, system=system)
+        return _ollama_structured(prompt, schema, system=system, model=_ollama_text_model())
     return _openai_structured(prompt, schema, system=system)
 
 
-def _ollama_structured(prompt, schema, system=None):
+def generate_structured_vision(prompt, schema, images, system=None):
+    """Structured extraction from one or more images using local Ollama Vision."""
+    provider = ai_provider_name()
+    if provider == "none":
+        raise AIProviderError("KI-Auswertung ist deaktiviert (AI_PROVIDER=none).")
+    if provider != "ollama":
+        raise AIProviderError("Der Bild-/Screenshot-Import ist derzeit für AI_PROVIDER=ollama vorgesehen.")
+    if not images:
+        raise AIProviderError("Für den Bildimport wurde kein Bild übergeben.")
+    return _ollama_structured(prompt, schema, system=system, model=_ollama_vision_model(), images=images)
+
+
+def _ollama_structured(prompt, schema, system=None, model=None, images=None):
     base = _ollama_base_url()
-    model = _ollama_model()
+    model = model or _ollama_text_model()
     timeout = _timeout_seconds("OLLAMA_TIMEOUT_SECONDS", 120)
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    user_message = {"role": "user", "content": prompt}
+    if images:
+        encoded=[]
+        for image in images:
+            if not isinstance(image, (bytes, bytearray)) or not image:
+                raise AIProviderError("Ungültige Bilddaten für Ollama.")
+            encoded.append(base64.b64encode(bytes(image)).decode("ascii"))
+        user_message["images"] = encoded
+    messages.append(user_message)
     payload = {
         "model": model,
         "messages": messages,
         "format": schema,
         "stream": False,
+        "think": False,
         "options": {"temperature": 0},
     }
     try:
@@ -183,8 +213,10 @@ def provider_public_config():
     except AIProviderError:
         provider = "invalid"
     model = ""
+    vision_model = ""
     if provider == "ollama":
-        model = os.environ.get("OLLAMA_MODEL", "qwen3:8b").strip()
+        model = os.environ.get("OLLAMA_TEXT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen3:14b")).strip()
+        vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma3:12b").strip()
     elif provider == "openai":
         model = _openai_model()
     try:
@@ -198,6 +230,7 @@ def provider_public_config():
     return {
         "ai_provider": provider,
         "ai_model": model,
+        "ai_vision_model": vision_model,
         "rules_search_provider": rules_provider,
         "web_fallback_provider": fallback_provider,
     }
@@ -209,7 +242,8 @@ def provider_status():
         return {"status": "disabled", "provider": "none", "model": ""}
     if provider == "ollama":
         base = _ollama_base_url()
-        model = _ollama_model()
+        model = _ollama_text_model()
+        vision_model = _ollama_vision_model()
         try:
             response = requests.get(f"{base}/api/tags", timeout=(3, 8))
             response.raise_for_status()
@@ -217,8 +251,24 @@ def provider_status():
         except Exception as exc:
             raise AIProviderError("Ollama ist vom Docker-Backend nicht erreichbar.") from exc
         names = {str(m.get("name") or "") for m in (data.get("models") or []) if isinstance(m, dict)}
-        available = model in names or any(name.split(":", 1)[0] == model.split(":", 1)[0] for name in names)
-        return {"status": "ok" if available else "model_missing", "provider": "ollama", "model": model, "model_available": available}
+        def has_model(wanted):
+            if wanted in names:
+                return True
+            # Nur bei taglosen Namen (z. B. "gemma3") darf irgendein Tag derselben Familie gelten.
+            if ":" not in wanted:
+                return any(name.split(":", 1)[0] == wanted for name in names)
+            return False
+        available = has_model(model)
+        vision_available = has_model(vision_model)
+        return {
+            "status": "ok" if available else "model_missing",
+            "provider": "ollama",
+            "model": model,
+            "model_available": available,
+            "vision_model": vision_model,
+            "vision_model_available": vision_available,
+            "vision_status": "ok" if vision_available else "model_missing",
+        }
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         raise AIProviderError("Für AI_PROVIDER=openai fehlt OPENAI_API_KEY.")
     return {"status": "configured", "provider": "openai", "model": _openai_model()}

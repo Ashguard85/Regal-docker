@@ -54,3 +54,55 @@ def test_rules_link_from_source_without_cloud_search(monkeypatch):
     assert result["rules_url"] == "https://publisher.example/rules.pdf"
     assert result["web_search_used"] is False
     assert result["verified"] is False
+
+
+def test_prepared_text_import_uses_ai_without_fetch(monkeypatch):
+    os.environ["AI_PROVIDER"] = "ollama"
+    import app.ai_import as mod
+    importlib.reload(mod)
+    monkeypatch.setattr(mod, "validate_public_https_url", lambda url: url)
+    seen = {}
+    def fake_generate(prompt, schema, system=None):
+        seen["prompt"] = prompt
+        return {
+            "title":"Andor StoryQuest – Dunkle Pfade",
+            "description":"Solo-Storyspiel in Andor.",
+            "rules_url":"https://cms.kosmos.de/rules.pdf",
+            "rules_text":"",
+            "min_players":1,"max_players":1,"play_time_min":45,"min_age":12,
+            "publisher":"KOSMOS","year":2021,"designer":"Stefan Blanck",
+            "ean":"4002051698973","cover_url":"https://static.example/cover.jpg",
+            "award":"","tags":["Solo","Storyspiel"],"warnings":[]
+        }
+    monkeypatch.setattr(mod, "generate_structured", fake_generate)
+    monkeypatch.setattr(mod, "ai_provider_name", lambda: "ollama")
+    result = mod.import_from_text("EAN: 4002051698973\nSpieler: 1", "https://www.galaxus.ch/product")
+    assert result["prepared_import"] is True
+    assert result["ai_provider"] == "ollama"
+    assert result["game"]["ean"] == "4002051698973"
+    assert result["game"]["source_url"] == "https://www.galaxus.ch/product"
+    assert "Vorbereitete Produktinformationen" in seen["prompt"]
+
+
+def test_image_import_uses_vision_model(monkeypatch):
+    os.environ["AI_PROVIDER"] = "ollama"
+    import app.ai_import as mod
+    importlib.reload(mod)
+    captured = {}
+
+    def fake_vision(prompt, schema, images, system=None):
+        captured["count"] = len(images)
+        return {
+            "title":"Andor: StoryQuest – Dunkle Pfade", "description":"Solo-Kartenspiel", "rules_url":"", "rules_text":"",
+            "min_players":1, "max_players":1, "play_time_min":45, "min_age":12,
+            "publisher":"KOSMOS", "year":2021, "designer":"", "ean":"4002051698973", "cover_url":"",
+            "award":"", "tags":["Solo","Kartenspiel"], "warnings":[]
+        }
+
+    monkeypatch.setattr(mod, "generate_structured_vision", fake_vision)
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+    result = mod.import_from_images([png], "https://www.galaxus.ch/de/product/example")
+    assert result["game"]["title"].startswith("Andor")
+    assert result["game"]["ean"] == "4002051698973"
+    assert result["game"]["source_url"].startswith("https://www.galaxus.ch/")
+    assert captured["count"] == 1

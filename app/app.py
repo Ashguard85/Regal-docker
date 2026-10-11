@@ -6,7 +6,7 @@ from flask import Flask, jsonify, request, send_from_directory, send_file
 from io import BytesIO
 
 from . import db, attachments
-from .ai_import import import_from_url, search_official_rules
+from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 
 APP_DIR = Path(__file__).resolve().parent
@@ -46,7 +46,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="6.0.0",
+            version="7.0.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -178,6 +178,61 @@ def create_app(test_config=None):
         except Exception:
             app.logger.exception("AI/link import failed")
             return jsonify(error="Die externe Seite konnte momentan nicht ausgewertet werden."), 502
+
+
+    @app.route("/api/ai/from-text", methods=["POST", "OPTIONS"])
+    def ai_from_text():
+        if request.method == "OPTIONS": return ("", 204)
+        if os.environ.get("AI_IMPORT_ENABLED", "false").lower() not in {"1","true","yes","on"}:
+            return jsonify(error="Die KI-Auswertung ist serverseitig deaktiviert."), 503
+        payload = request.get_json(silent=True) or {}
+        prepared_text = str(payload.get("text", "")).strip()
+        source_url = str(payload.get("source_url", "")).strip()
+        if not prepared_text: return jsonify(error="Vorbereitete Importdaten fehlen."), 400
+        try:
+            return jsonify(import_from_text(prepared_text, source_url))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except AIProviderError as exc:
+            return jsonify(error=str(exc)), 503
+        except Exception:
+            app.logger.exception("AI/prepared-text import failed")
+            return jsonify(error="Die vorbereiteten Importdaten konnten momentan nicht ausgewertet werden."), 502
+
+
+    @app.route("/api/ai/from-image", methods=["POST", "OPTIONS"])
+    def ai_from_image():
+        if request.method == "OPTIONS": return ("", 204)
+        if os.environ.get("AI_IMPORT_ENABLED", "false").lower() not in {"1","true","yes","on"}:
+            return jsonify(error="Die KI-Auswertung ist serverseitig deaktiviert."), 503
+        uploads = request.files.getlist("images")
+        if not uploads:
+            one = request.files.get("image")
+            uploads = [one] if one else []
+        if not uploads:
+            return jsonify(error="Bitte mindestens einen Screenshot auswählen."), 400
+        if len(uploads) > 4:
+            return jsonify(error="Maximal 4 Screenshots gleichzeitig."), 400
+        source_url = str(request.form.get("source_url", "")).strip()
+        image_bytes = []
+        total = 0
+        for uploaded in uploads:
+            content = uploaded.stream.read(10 * 1024 * 1024 + 1)
+            if len(content) > 10 * 1024 * 1024:
+                return jsonify(error=f"{uploaded.filename or 'Bild'} ist größer als 10 MB."), 400
+            total += len(content)
+            if total > 30 * 1024 * 1024:
+                return jsonify(error="Die Bilder sind zusammen größer als 30 MB."), 400
+            image_bytes.append(content)
+        try:
+            return jsonify(import_from_images(image_bytes, source_url))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except AIProviderError as exc:
+            return jsonify(error=str(exc)), 503
+        except Exception:
+            app.logger.exception("AI/image import failed")
+            return jsonify(error="Die Screenshots konnten momentan nicht ausgewertet werden."), 502
 
 
     @app.route("/api/ai/rules-search", methods=["POST", "OPTIONS"])
