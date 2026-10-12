@@ -9,6 +9,7 @@ from . import db, attachments
 from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 from .research_search import search_provider_name as auto_search_provider_name
+from .research_config import get_settings as get_research_settings, save_settings as save_research_settings, reset_settings as reset_research_settings
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -47,7 +48,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.1.0",
+            version="8.2.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -55,6 +56,24 @@ def create_app(test_config=None):
             auto_search_provider=auto_search_provider_name(),
             **public_ai,
         )
+
+
+    @app.route("/api/research-settings", methods=["GET", "PUT", "POST", "OPTIONS"])
+    def research_settings():
+        if request.method == "OPTIONS": return ("", 204)
+        if request.method == "GET":
+            return jsonify(get_research_settings())
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            if payload.get("action") != "reset":
+                return jsonify(error="Unbekannte Aktion."), 400
+            return jsonify(reset_research_settings())
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify(save_research_settings(payload))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+
 
 
     @app.route("/api/ai/status", methods=["GET", "OPTIONS"])

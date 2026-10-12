@@ -503,7 +503,7 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 }
 
 
-/* v8.1: dedicated import tab and review workflow */
+/* v8.2: import tab, review workflow and editable research settings */
 .import-hero { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:14px; padding:18px; border-radius:22px; color:#f8fbf8; background:linear-gradient(135deg,#1d4c3a,#15362a 62%,#102b22); box-shadow:0 15px 35px rgba(22,53,42,.16); }
 .import-hero h2 { margin:0; font-size:1.4rem; letter-spacing:-.03em; }
 .import-hero p:not(.eyebrow) { margin:8px 0 0; max-width:570px; color:#d7e5dd; font-size:.86rem; }

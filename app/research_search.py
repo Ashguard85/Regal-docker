@@ -6,6 +6,7 @@ import requests
 
 from .security import validate_public_https_url
 from .ai_import import extract_page
+from .research_config import get_settings, source_trust
 
 
 class ResearchSearchError(RuntimeError):
@@ -43,9 +44,9 @@ def _int_env(name, default, lo, hi):
     return min(max(value, lo), hi)
 
 
-def searxng_search(query):
+def searxng_search(query, limit=None):
     base = _searxng_base_url()
-    limit = _int_env("AUTO_SEARCH_RESULTS", 8, 3, 15)
+    limit = limit or _int_env("AUTO_SEARCH_RESULTS", 8, 3, 15)
     timeout = _int_env("AUTO_SEARCH_TIMEOUT_SECONDS", 20, 5, 60)
     try:
         response = requests.get(
@@ -92,7 +93,27 @@ def search(query):
     provider = search_provider_name()
     if provider == "none":
         raise ResearchSearchError("Automatische Websuche ist nicht eingerichtet (AUTO_SEARCH_PROVIDER=none).")
-    return searxng_search(query)
+    settings = get_settings()
+    rows = []
+    # Primärquellen zuerst gezielt anfragen. SearXNG reicht site:-Operatoren an die Suchmaschinen weiter.
+    primary = settings.get("primary_domains") or []
+    if primary:
+        domain_clause = " OR ".join(f"site:{d}" for d in primary[:8])
+        try:
+            rows.extend(searxng_search(f"{query} ({domain_clause})", limit=10))
+        except ResearchSearchError:
+            pass
+    rows.extend(searxng_search(query))
+    dedup = {}
+    for row in rows:
+        url = row.get("url")
+        if not url or url in dedup:
+            continue
+        row = dict(row)
+        row["trust"] = source_trust(url, settings)
+        dedup[url] = row
+    order = {"primary": 0, "normal": 1, "low": 2}
+    return sorted(dedup.values(), key=lambda x: order.get(x.get("trust"), 1))[:15]
 
 
 def research_game(query):
@@ -111,9 +132,13 @@ def research_game(query):
 
     for index, result in enumerate(results, 1):
         sources.append(result["url"])
+        trust = result.get("trust") or "normal"
         chunks.append(
-            f"\n=== Suchtreffer {index} ===\nTitel: {result['title']}\nURL: {result['url']}\nSuchsnippet: {result['content']}\n"
+            f"\n=== Suchtreffer {index} [{trust.upper()}] ===\nTitel: {result['title']}\nURL: {result['url']}\nSuchsnippet: {result['content']}\n"
         )
+        if trust == "low":
+            chunks.append("Niedrig priorisierte Quelle: nicht direkt als Kerndatenquelle abrufen.\n")
+            continue
         if fetched >= max_pages:
             continue
         try:

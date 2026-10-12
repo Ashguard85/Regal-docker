@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.1.0
+# Portainer Stack – Brettspielregal v8.2.0
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -23,7 +23,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern.
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.1.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.2.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -149,9 +149,14 @@ Danach **Update the stack**.
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
-## v8.1 Bedienung
+## v8.2 Bedienung
 
 - **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht.
 - **Import**: Schnellerfassung, Workerstatus, Queue und Prüfaufträge.
 - **Setup**: Verbindung, Ollama, Backup und Betriebsmodus.
 - Ein Eintrag mit **Bitte prüfen** wird im Import-Tab über **Prüfen** geöffnet und kann anschließend mit **✓ Passt – geprüft** bestätigt werden.
+
+
+## Quellen und Prompt konfigurieren
+
+Nach dem Start in Brettspielregal unter **Setup → Automatische Recherche – Quellen & Prompt**. Diese fachlichen Regeln liegen persistent in SQLite. Ollama-URL, Modelle und Timeouts bleiben als Portainer-Umgebungsvariablen.

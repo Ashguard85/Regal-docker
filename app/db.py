@@ -7,7 +7,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BACKUP_VERSION = 3
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3}
 
@@ -126,6 +126,46 @@ def init_db():
                 );
             """)
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (4, utcnow()))
+
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 5 not in applied:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+            """)
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (5, utcnow()))
+
+
+def get_app_settings(keys=None):
+    with connect() as conn:
+        if keys:
+            keys = [str(x)[:200] for x in keys]
+            placeholders = ",".join("?" for _ in keys)
+            rows = conn.execute(f"SELECT key,value FROM app_settings WHERE key IN ({placeholders})", keys).fetchall()
+        else:
+            rows = conn.execute("SELECT key,value FROM app_settings").fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
+
+def set_app_setting(key, value):
+    key = str(key or "").strip()[:200]
+    if not key:
+        raise ValueError("Einstellungsschlüssel fehlt.")
+    value = str(value or "")
+    with connect() as conn:
+        conn.execute("INSERT INTO app_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at", (key, value, utcnow()))
+
+
+def delete_app_settings(keys):
+    keys = [str(x)[:200] for x in (keys or []) if str(x).strip()]
+    if not keys:
+        return
+    placeholders = ",".join("?" for _ in keys)
+    with connect() as conn:
+        conn.execute(f"DELETE FROM app_settings WHERE key IN ({placeholders})", keys)
 
 
 def _int_or_none(value, minimum=None, maximum=None):

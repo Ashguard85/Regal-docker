@@ -1,1 +1,1 @@
-window.APP_CONFIG = {buildTarget:"docker",version:"8.1.0",defaultApiUrl:"",allowLocalMode:false};
+window.APP_CONFIG = {buildTarget:"docker",version:"8.2.0",defaultApiUrl:"",allowLocalMode:false};

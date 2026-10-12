@@ -1,9 +1,16 @@
-# Brettspielregal – Docker Fullstack v8.1.0
+# Brettspielregal – Docker Fullstack v8.2.0
 
-Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama und **persistenter Hintergrund-Recherche**. Docker v8.1 und GitHub Pages v8.1 gehören zusammen.
+Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama und **persistenter Hintergrund-Recherche**. Docker v8.2 und GitHub Pages v8.2 gehören zusammen.
 
 
-## Neu in v8.1
+## Neu in v8.2
+
+- Primärquellen und niedrig priorisierte Domains direkt unter **Setup → Automatische Recherche – Quellen & Prompt** pflegen.
+- Recherche-Systemprompt und Prompt-Vorlage im Backend editierbar, persistent in SQLite und auf Standard rücksetzbar.
+- Primärquellen werden bei SearXNG bevorzugt gesucht und gewichtet.
+- Schutz gegen Review-/Seitentitel als Spieltitel, ungültige GTIN/EAN, HTML-Seiten als Cover und nicht-offizielle Regelseiten.
+- In der Prüfansicht werden die verwendeten Recherchequellen angezeigt.
+
 
 ### Eigener Import-Tab
 
@@ -82,7 +89,7 @@ AUTO_FETCH_PAGES: "4"
 AUTO_RESEARCH_MAX_CHARS: "30000"
 ```
 
-Siehe `PORTAINER_SETUP.md` sowie `portainer-stack-v8.1.yml` für den vollständigen Stack.
+Siehe `PORTAINER_SETUP.md` sowie `portainer-stack-v8.2.yml` für den vollständigen Stack.
 
 ## Neue API-Routen
 

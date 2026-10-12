@@ -80,3 +80,40 @@ def fetch_public_text(url):
         response.close()
         return b"".join(chunks).decode(encoding, errors="replace"), current
     raise ValueError("Zu viele Weiterleitungen beim externen Abruf.")
+
+def probe_public_asset(url, allowed_prefixes=("image/", "application/pdf")):
+    """Safely probe an HTTPS asset without downloading the whole file."""
+    session = requests.Session()
+    session.trust_env = False
+    current = validate_public_https_url(url)
+    headers = {"User-Agent": "Brettspielregal/8.2 (+self-hosted metadata importer)", "Accept": "*/*"}
+    for _ in range(MAX_REDIRECTS + 1):
+        response = session.get(current, headers=headers, timeout=(4, 8), allow_redirects=False, stream=True)
+        try:
+            peer = response.raw._connection.sock.getpeername()[0]
+            _validate_ip_value(peer)
+        except ValueError:
+            response.close()
+            raise
+        except Exception:
+            response.close()
+            raise ValueError("Die Zieladresse des externen Servers konnte nicht sicher geprüft werden.")
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ValueError("Externer Server lieferte eine ungültige Weiterleitung.")
+            current = validate_public_https_url(urljoin(current, location))
+            continue
+        if response.status_code >= 400:
+            code = response.status_code
+            response.close()
+            raise ValueError(f"Externe Datei antwortete mit HTTP {code}.")
+        ctype = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        ok = any(ctype.startswith(prefix) for prefix in allowed_prefixes)
+        response.close()
+        if not ok:
+            raise ValueError(f"Externer Link liefert keinen erwarteten Dateityp ({ctype or 'unbekannt'}).")
+        return current, ctype
+    raise ValueError("Zu viele Weiterleitungen beim externen Abruf.")
+

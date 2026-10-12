@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.1.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.2.0",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -280,7 +280,8 @@ function openGameDetail(gameId){
   const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button><button class="button" type="button" data-download-attachment="${esc(a.id)}">Laden</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
   const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
   const reviewJob=latestJobForGame(game.id),needsReview=reviewJob?.status==="review";
-  const warningPanel=needsReview?`<section class="detail-panel review-panel"><h4>Automatische Ergänzung prüfen</h4><p class="hint">Der Worker hat die Daten gespeichert, konnte aber nicht alles eindeutig bestätigen. Prüfe besonders diese Hinweise:</p>${reviewJob.warnings?.length?`<ul class="review-warning-list">${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:`<p class="detail-notes">Bitte die automatisch ergänzten Angaben kurz gegen Cover, Hersteller oder Anleitung prüfen.</p>`}</section>`:"";
+  const sourceItems=(reviewJob?.sources||[]).map(url=>{try{const u=new URL(url);return `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(u.hostname.replace(/^www\./,""))}</a></li>`;}catch{return "";}}).join("");
+  const warningPanel=needsReview?`<section class="detail-panel review-panel"><h4>Automatische Ergänzung prüfen</h4><p class="hint">Der Worker hat die Daten gespeichert, konnte aber nicht alles eindeutig bestätigen. Prüfe besonders diese Hinweise:</p>${reviewJob.warnings?.length?`<ul class="review-warning-list">${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:`<p class="detail-notes">Bitte die automatisch ergänzten Angaben kurz gegen Cover, Hersteller oder Anleitung prüfen.</p>`}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}</section>`:"";
   $("detailTitle").textContent=game.title||"Spiel";
   $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section><section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
   $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
@@ -489,6 +490,35 @@ async function loadSetup(){
   serverConfig=await loadServerConnection();$("backendUrl").value=serverConfig.url||config.defaultApiUrl||"";$("cfClientId").value=serverConfig.clientId||"";$("cfClientSecret").value="";$("cfClientSecret").placeholder=serverConfig.clientSecret?"Gespeichert – zum Ersetzen neu eingeben":"Neu setzen oder leer lassen";
   $("versionLabel").textContent=config.version;$("buildTargetLabel").textContent=isDocker()?"Docker Fullstack Build":"GitHub Pages PWA Build";
   $("serverConfigForm").classList.toggle("hidden",isDocker());
+  $("researchSettingsDetails").classList.toggle("hidden",currentMode!=="server");
+  if(currentMode==="server"){
+    try{
+      const r=await provider.researchSettings();
+      $("primarySourcesInput").value=(r.primary_domains||[]).join("\n");
+      $("lowTrustSourcesInput").value=(r.low_trust_domains||[]).join("\n");
+      $("researchSystemPromptInput").value=r.system_prompt||"";
+      $("researchPromptInput").value=r.research_prompt||"";
+      $("researchSettingsStatus").textContent="";
+    }catch(err){$("researchSettingsStatus").textContent=err.message;}
+  }
+}
+async function saveResearchSettings(event){
+  event.preventDefault();const submit=$("researchSettingsForm").querySelector('button[type="submit"]');setBusy(submit,true,"Speichere …");
+  try{
+    const data=await provider.saveResearchSettings({
+      primary_domains:$("primarySourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
+      low_trust_domains:$("lowTrustSourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
+      system_prompt:$("researchSystemPromptInput").value,
+      research_prompt:$("researchPromptInput").value,
+    });
+    $("primarySourcesInput").value=(data.primary_domains||[]).join("\n");$("lowTrustSourcesInput").value=(data.low_trust_domains||[]).join("\n");
+    $("researchSettingsStatus").textContent="Gespeichert. Neue Worker-Aufträge verwenden diese Einstellungen.";
+  }catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(submit,false);}
+}
+async function resetResearchSettings(){
+  if(!confirm("Primärquellen und Prompts auf die v8.2-Standardwerte zurücksetzen?"))return;
+  const b=$("resetResearchSettingsButton");setBusy(b,true,"Setze zurück …");
+  try{await provider.resetResearchSettings();await loadSetup();$("researchSettingsStatus").textContent="Standardwerte wiederhergestellt.";}catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(b,false);}
 }
 async function saveConnection(event){event.preventDefault();const url=normalizeUrl($("backendUrl").value);if(url&&!/^https:\/\//i.test(url)){showMessage("Ungültige Backend-URL","Im externen Pages-Frontend ist nur eine öffentliche HTTPS-Backend-URL vorgesehen.");return;}await saveServerConnection({url,clientId:$("cfClientId").value.trim(),clientSecret:$("cfClientSecret").value});showMessage("Gespeichert","Die Server-Konfiguration wurde nur auf diesem Gerät gespeichert.");await loadSetup();if(currentMode==="server"){try{provider=await makeServerProvider();await refreshConfig();await loadGames();}catch{}}}
 async function clearSecrets(){if(!confirm("Gespeicherte Cloudflare-Zugangsdaten auf diesem Gerät löschen?"))return;await wipeServerSecrets();await loadSetup();showMessage("Zugangsdaten gelöscht","Client ID und Client Secret wurden aus IndexedDB entfernt.");}
@@ -527,7 +557,7 @@ function bindEvents(){
   $("detailAttachmentInput").addEventListener("change",e=>addDetailFiles([...e.target.files||[]]));
   $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("aiImageButton").addEventListener("click",()=>$("aiImageInput").click());$("aiImageInput").addEventListener("change",e=>aiImageImport(e.target.files));$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
-  $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
+  $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("researchSettingsForm").addEventListener("submit",saveResearchSettings);$("resetResearchSettingsButton").addEventListener("click",resetResearchSettings);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
   const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
   document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
   window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));

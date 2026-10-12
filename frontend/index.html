@@ -125,6 +125,31 @@ Dorfromantik"></textarea></label>
           <p class="hint">Ollama wird ausschließlich vom Docker-Backend angesprochen. Die GitHub-Pages-PWA verbindet sich niemals direkt mit Port 11434. Im lokalen Pages-Modus wird keine KI verwendet.</p>
         </div></details>
 
+        <details id="researchSettingsDetails"><summary>Automatische Recherche – Quellen & Prompt</summary><div class="details-body stack">
+          <p class="hint">Diese Einstellungen gelten nur für den Docker-Hintergrundimport. Technische Werte wie Modellname, Ollama-URL und Timeout bleiben in Portainer.</p>
+          <form id="researchSettingsForm" class="form-grid">
+            <label class="full">Primärquellen – eine Domain pro Zeile
+              <textarea id="primarySourcesInput" rows="7" placeholder="kosmos.de
+ravensburger.de"></textarea>
+              <span class="hint">Diese Domains werden bevorzugt gesucht und gewichtet.</span>
+            </label>
+            <label class="full">Niedrig priorisierte Quellen – eine Domain pro Zeile
+              <textarea id="lowTrustSourcesInput" rows="6" placeholder="spieletest.at
+amazon.de"></textarea>
+              <span class="hint">Dürfen Hinweise liefern, aber nicht allein Titel, EAN, Cover oder Anleitung bestimmen.</span>
+            </label>
+            <label class="full">System-Prompt
+              <textarea id="researchSystemPromptInput" rows="6"></textarea>
+            </label>
+            <label class="full">Recherche-Prompt
+              <textarea id="researchPromptInput" rows="16"></textarea>
+              <span class="hint">Pflicht-Platzhalter: <code>{{QUERY}}</code>, <code>{{CURRENT_GAME}}</code>, <code>{{SOURCES}}</code>, <code>{{EVIDENCE}}</code>. Optional: <code>{{PRIMARY_DOMAINS}}</code>, <code>{{LOW_TRUST_DOMAINS}}</code>.</span>
+            </label>
+            <div class="full button-row"><button class="button primary" type="submit">Recherche-Einstellungen speichern</button><button id="resetResearchSettingsButton" class="button" type="button">Auf Standard zurücksetzen</button></div>
+            <p id="researchSettingsStatus" class="hint full" role="status"></p>
+          </form>
+        </div></details>
+
         <details><summary>Import / Export</summary><div class="details-body stack">
           <button id="exportButton" class="button">Backup exportieren</button>
           <label class="button file-button">Backup importieren<input id="importInput" type="file" accept="application/json,.json"></label>
@@ -140,7 +165,7 @@ Dorfromantik"></textarea></label>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.1.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.2.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
