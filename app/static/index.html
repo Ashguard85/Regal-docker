@@ -35,7 +35,7 @@
             <p class="hero-kicker">Dein persönliches Spieleregal</p>
             <div class="section-head">
               <div><h2 id="collectionHeading">Brettspiele</h2><p id="collectionCount" class="muted">0 Spiele</p></div>
-              <button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button>
+              <div class="hero-actions"><button id="quickCaptureButton" class="button quick-button hidden" type="button"><span aria-hidden="true">⚡</span> Schnell</button><button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button></div>
             </div>
             <p class="hero-text">Schnell finden, was du besitzt – inklusive Regeln, Cover und wichtigen Spieldaten.</p>
           </div>
@@ -49,6 +49,11 @@
           <p class="collection-subhint">Eigene Bilder und Anleitungen direkt am Spiel speichern.</p>
         </div>
         <div id="statusBanner" class="status-banner hidden" role="status"></div>
+        <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
+          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Automatische Ergänzung</h3></div><span id="workerBadge" class="worker-badge">Worker …</span></div>
+          <p id="queueSummary" class="muted">Keine Aufträge.</p>
+          <div id="queueList" class="queue-list"></div>
+        </section>
         <div id="gameList" class="game-list"></div>
         <div id="emptyState" class="empty-state hidden">
           <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -84,6 +89,8 @@
           <p id="aiModelLabel" class="muted"></p>
           <p id="aiVisionModelLabel" class="muted"></p>
           <p id="aiSearchLabel" class="muted"></p>
+          <p id="autoEnrichLabel" class="muted"></p>
+          <p id="autoSearchLabel" class="muted"></p>
           <button id="testAiButton" class="button" type="button">KI-Verbindung testen</button>
           <p class="hint">Ollama wird ausschließlich vom Docker-Backend angesprochen. Die GitHub-Pages-PWA verbindet sich niemals direkt mit Port 11434. Im lokalen Pages-Modus wird keine KI verwendet.</p>
         </div></details>
@@ -103,7 +110,7 @@
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">7.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -112,6 +119,19 @@
       <button class="nav-button" data-view="setup"><span>⚙</span><small>Setup</small></button>
     </nav>
   </div>
+
+  <dialog id="quickCaptureDialog" class="dialog">
+    <form id="quickCaptureForm" method="dialog" class="dialog-card compact">
+      <div class="dialog-head"><div><p class="eyebrow">Schnellerfassung</p><h2>Mehrere Spiele einreihen</h2></div><button id="closeQuickCaptureButton" type="button" class="icon-button" aria-label="Schließen">×</button></div>
+      <p class="muted">Ein Titel oder eine EAN pro Zeile. Die Spiele werden sofort angelegt; der Server ergänzt sie anschließend nacheinander im Hintergrund.</p>
+      <label class="quick-capture-label">Titel / EANs<textarea id="quickCaptureInput" rows="10" maxlength="12000" placeholder="Sky Team
+4002051698973
+Cascadia
+Dorfromantik"></textarea></label>
+      <div class="quick-example"><strong>Du kannst direkt weitermachen.</strong><span>Ollama und die Websuche laufen im Docker-Worker weiter, auch wenn du die PWA schließt.</span></div>
+      <div class="dialog-actions"><button id="cancelQuickCaptureButton" class="button" type="button">Abbrechen</button><span class="spacer"></span><button id="submitQuickCaptureButton" class="button primary" type="submit">Zur Warteschlange</button></div>
+    </form>
+  </dialog>
 
   <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 

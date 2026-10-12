@@ -8,6 +8,7 @@ from io import BytesIO
 from . import db, attachments
 from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
+from .research_search import search_provider_name as auto_search_provider_name
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -46,10 +47,12 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="7.0.0",
+            version="8.0.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
+            auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
+            auto_search_provider=auto_search_provider_name(),
             **public_ai,
         )
 
@@ -73,7 +76,82 @@ def create_app(test_config=None):
         try: game = db.normalize_game(payload)
         except ValueError as exc: return jsonify(error=str(exc)), 400
         db.save_game(game)
+        if os.environ.get("AUTO_ENRICH_NEW_GAMES", "false").lower() in {"1","true","yes","on"}:
+            try:
+                db.enqueue_import_job(game["id"], game.get("ean") or game.get("title"))
+            except ValueError:
+                pass
         return jsonify(game), 201
+
+    @app.route("/api/import-queue", methods=["GET", "OPTIONS"])
+    def import_queue():
+        if request.method == "OPTIONS": return ("", 204)
+        return jsonify(jobs=db.list_import_jobs(150), worker=db.worker_state())
+
+    @app.route("/api/import-queue/quick", methods=["POST", "OPTIONS"])
+    def quick_capture():
+        if request.method == "OPTIONS": return ("", 204)
+        if os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() not in {"1","true","yes","on"} or os.environ.get("AI_IMPORT_ENABLED", "false").lower() not in {"1","true","yes","on"}:
+            return jsonify(error="Die automatische Hintergrund-Ergänzung oder KI ist deaktiviert."), 503
+        payload = request.get_json(silent=True) or {}
+        raw_text = str(payload.get("text") or "")
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            lines = [str(x).strip() for x in raw_items if str(x).strip()]
+        else:
+            lines = [x.strip() for x in raw_text.splitlines() if x.strip()]
+        if not lines:
+            return jsonify(error="Bitte mindestens einen Titel oder eine EAN eingeben."), 400
+        if len(lines) > 100:
+            return jsonify(error="Pro Schnellerfassung sind maximal 100 Einträge erlaubt."), 400
+        created = []
+        for line in lines:
+            digits = "".join(ch for ch in line if ch.isdigit())
+            is_ean = 8 <= len(digits) <= 14 and all(ch.isdigit() or ch in " -" for ch in line)
+            existing = db.find_game_by_ean(digits) if is_ean else db.find_game_by_title(line)
+            if existing:
+                game = existing
+                reused = True
+            else:
+                game_id = str(uuid.uuid4())
+                raw = {"id": game_id, "title": f"EAN {digits}" if is_ean else line[:180], "ean": digits if is_ean else ""}
+                try:
+                    game = db.normalize_game(raw)
+                except ValueError as exc:
+                    return jsonify(error=str(exc)), 400
+                db.save_game(game)
+                reused = False
+            query = digits if is_ean else line
+            job = db.enqueue_import_job(game["id"], query)
+            created.append({"game": game, "job": job, "reused": reused})
+        return jsonify(items=created, count=len(created)), 201
+
+    @app.route("/api/import-queue/games/<game_id>", methods=["POST", "OPTIONS"])
+    def enqueue_existing_game(game_id):
+        if request.method == "OPTIONS": return ("", 204)
+        game = db.get_game(game_id)
+        if not game: return jsonify(error="Spiel wurde nicht gefunden."), 404
+        payload = request.get_json(silent=True) or {}
+        query = str(payload.get("query") or game.get("ean") or game.get("title") or "").strip()
+        try: job = db.enqueue_import_job(game_id, query, replace_active=bool(payload.get("replace_active")))
+        except ValueError as exc: return jsonify(error=str(exc)), 400
+        return jsonify(job), 201
+
+    @app.route("/api/import-queue/<job_id>/retry", methods=["POST", "OPTIONS"])
+    def retry_import_job(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: job = db.retry_import_job(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(job)
+
+    @app.route("/api/import-queue/<job_id>", methods=["DELETE", "OPTIONS"])
+    def cancel_import_job(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: ok = db.cancel_import_job(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not ok: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(status="cancelled")
 
     @app.route("/api/games/<game_id>", methods=["GET", "PUT", "PATCH", "DELETE", "OPTIONS"])
     def game_item(game_id):

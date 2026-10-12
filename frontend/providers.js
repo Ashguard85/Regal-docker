@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"7.0.0",ai_import_enabled:false,rules_search_enabled:false,ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.0.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -171,6 +171,11 @@ export class ServerProvider{
     return this.request("/api/ai/from-image",{method:"POST",body:form,timeoutMs:620000});
   }
   searchRules(game){return this.request("/api/ai/rules-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:90000});}
+  importQueue(){return this.request("/api/import-queue",{timeoutMs:20000});}
+  quickCapture(text){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text}),timeoutMs:60000});}
+  enqueueEnrichment(gameId,query=""){return this.request(`/api/import-queue/games/${encodeURIComponent(gameId)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query}),timeoutMs:20000});}
+  retryImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/retry`,{method:"POST",timeoutMs:20000});}
+  cancelImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}`,{method:"DELETE",timeoutMs:20000});}
 }
 
 export async function loadServerConnection(){return {url:await getSetting("serverUrl",""),clientId:await getSecret("cfClientId"),clientSecret:await getSecret("cfClientSecret")};}

@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "7.0.0"
+        assert cfg["version"] == "8.0.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -67,3 +67,20 @@ def test_ai_endpoints_are_disabled_by_default():
         assert c.post("/api/ai/from-text", json={"text":"Titel: Azul"}).status_code == 503
         assert c.post("/api/ai/from-image").status_code == 503
         assert c.post("/api/ai/rules-search", json={"game":{"title":"Azul"}}).status_code == 503
+
+
+def test_quick_capture_creates_persistent_queue_jobs():
+    with tempfile.TemporaryDirectory() as tmp:
+        app = load_app(tmp)
+        os.environ["AI_IMPORT_ENABLED"] = "true"
+        os.environ["AUTO_ENRICH_ENABLED"] = "true"
+        c = app.test_client()
+        result = c.post("/api/import-queue/quick", json={"text": "Sky Team\n4002051698973"})
+        assert result.status_code == 201
+        assert result.json["count"] == 2
+        queue = c.get("/api/import-queue").json
+        assert len(queue["jobs"]) == 2
+        assert {j["status"] for j in queue["jobs"]} == {"queued"}
+        games = c.get("/api/games").json
+        assert len(games) == 2
+        assert any(g["ean"] == "4002051698973" for g in games)

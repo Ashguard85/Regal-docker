@@ -1,8 +1,9 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"7.0.0",defaultApiUrl:"",allowLocalMode:true};
-let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none";
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.0.0",defaultApiUrl:"",allowLocalMode:true};
+let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
+let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
 const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
 
@@ -78,7 +79,9 @@ async function refreshConfig(){
     aiModel=c.ai_model||"";
     aiVisionModel=c.ai_vision_model||"";
     rulesSearchProvider=c.rules_search_provider||"none";
-  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";aiVisionModel="";rulesSearchProvider="none";}
+    autoEnrichEnabled=!!c.auto_enrich_enabled;
+    autoSearchProvider=c.auto_search_provider||"none";
+  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";aiVisionModel="";rulesSearchProvider="none";autoEnrichEnabled=false;autoSearchProvider="none";}
   $("aiImportRow").classList.toggle("hidden",currentMode!=="server"||!aiEnabled);
   $("rulesSearchButton").disabled=!rulesSearchEnabled;
   $("rulesSearchButton").title=rulesSearchProvider==="openai"?"Offizielle Anleitung mit serverseitiger Websuche verifizieren":"Anleitungs-Link auf der Quellseite suchen; externe Websuche ist deaktiviert";
@@ -86,8 +89,49 @@ async function refreshConfig(){
   $("aiModelLabel").textContent=currentMode==="server"&&aiEnabled&&aiModel?`Textmodell: ${aiModel}`:"";
   $("aiVisionModelLabel").textContent=currentMode==="server"&&aiEnabled&&aiVisionModel?`Bildmodell: ${aiVisionModel}`:"";
   $("aiSearchLabel").textContent=currentMode==="server"&&aiEnabled?`Externe Anleitungs-Websuche: ${rulesSearchProvider==="openai"?"OpenAI":"aus"}`:"";
+  $("autoEnrichLabel").textContent=currentMode==="server"?`Hintergrund-Ergänzung: ${autoEnrichEnabled?"aktiv":"aus"}`:"";
+  $("autoSearchLabel").textContent=currentMode==="server"&&autoEnrichEnabled?`Automatische Websuche: ${autoSearchProvider}`:"";
+  $("quickCaptureButton").classList.toggle("hidden",currentMode!=="server"||!autoEnrichEnabled);
+  $("queuePanel").classList.toggle("hidden",currentMode!=="server"||!autoEnrichEnabled);
   $("testAiButton").disabled=currentMode!=="server"||!aiEnabled;
   $("aiImageButton").disabled=currentMode!=="server"||!aiEnabled||aiProvider!=="ollama";
+}
+function latestJobForGame(gameId){
+  return importJobs.find(j=>j.game_id===gameId)||null;
+}
+function jobStatusMeta(job){
+  if(!job)return null;
+  const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Bitte prüfen","review"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
+  const [label,kind]=map[job.status]||[job.status||"Status",""];
+  return {label,kind};
+}
+function renderQueue(){
+  const panel=$("queuePanel");
+  if(currentMode!=="server"||!autoEnrichEnabled){panel.classList.add("hidden");return;}
+  panel.classList.remove("hidden");
+  const active=importJobs.filter(j=>["queued","running"].includes(j.status));
+  const attention=importJobs.filter(j=>["review","failed"].includes(j.status));
+  $("queueSummary").textContent=active.length?`${active.length} Auftrag${active.length===1?"":"e"} aktiv · ${attention.length} mit Hinweis`:(attention.length?`${attention.length} Auftrag${attention.length===1?"":"e"} bitte prüfen`:"Keine wartenden Aufträge.");
+  $("workerBadge").textContent=workerState.status==="online"?"Worker online":"Worker offline";
+  $("workerBadge").classList.toggle("offline",workerState.status!=="online");
+  const shown=importJobs.filter(j=>["running","queued","review","failed"].includes(j.status)).slice(0,8);
+  $("queueList").innerHTML=shown.map(job=>{const m=jobStatusMeta(job);return `<div class="queue-row"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${job.status==="failed"?`<button class="queue-retry" type="button" data-retry-job="${esc(job.id)}">↻</button>`:""}</div>`;}).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
+  $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
+}
+async function refreshQueue(forceGames=false){
+  if(currentMode!=="server"||!autoEnrichEnabled){importJobs=[];renderQueue();return;}
+  try{
+    const result=await provider.importQueue();
+    importJobs=Array.isArray(result.jobs)?result.jobs:[];workerState=result.worker||{status:"offline",message:""};
+    const fingerprint=importJobs.map(j=>`${j.id}:${j.status}:${j.updated_at}`).join("|");
+    const changed=fingerprint!==queueFingerprint;queueFingerprint=fingerprint;
+    renderQueue();renderGames();
+    if(forceGames||changed&&importJobs.some(j=>["done","review"].includes(j.status)))await loadGames();
+  }catch(err){workerState={status:"offline",message:err.message};renderQueue();}
+}
+function startQueuePolling(){
+  if(queueTimer){clearInterval(queueTimer);queueTimer=null;}
+  if(currentMode==="server"&&autoEnrichEnabled){refreshQueue();queueTimer=setInterval(()=>refreshQueue(),8000);}
 }
 async function loadGames(){
   showBanner("");
@@ -150,10 +194,12 @@ function renderGames(){
     if(g.year)meta.push({text:String(g.year),kind:""});
     if(g.award)meta.push({text:g.award,kind:"award"});
     for(const tag of (g.tags||[]).slice(0,2))meta.push({text:tag,kind:""});
+    const job=latestJobForGame(g.id), jobMeta=jobStatusMeta(job);
+    if(jobMeta)meta.push({text:jobMeta.label,kind:`job-${jobMeta.kind}`});
     if(collectionView==="shelf"){
       card.className="game-card shelf-card";
       const subline=[g.publisher,g.year].filter(Boolean).join(" · ")||(g.designer?`von ${g.designer}`:"Meine Sammlung");
-      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
+      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}${jobMeta?`<span class="shelf-job-badge ${jobMeta.kind}">${esc(jobMeta.label)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
     }else{
       card.className="game-card";
       card.innerHTML=`<button class="card-hit with-cover" type="button">${coverHtml(g)}<div class="card-copy"><div class="game-title-row"><h3>${esc(g.title)}</h3><span aria-hidden="true">›</span></div>${g.description?`<p class="game-description">${esc(g.description)}</p>`:""}<div class="game-meta">${meta.map(x=>`<span class="chip ${x.kind}">${esc(x.text)}</span>`).join("")}</div></div></button>`;
@@ -344,6 +390,16 @@ async function processMagicImport(payload){
   if(apply){openGame();applyProposal(data);}
 }
 
+function openQuickCapture(){
+  if(currentMode!=="server"||!autoEnrichEnabled){showMessage("Nur im Server-Modus","Die Schnellerfassung mit Hintergrund-Worker ist nur im Server-Modus verfügbar.");return;}
+  $("quickCaptureInput").value="";$("quickCaptureDialog").showModal();setTimeout(()=>$("quickCaptureInput").focus(),40);
+}
+async function submitQuickCapture(event){
+  event.preventDefault();const text=$("quickCaptureInput").value.trim();if(!text)return;
+  const b=$("submitQuickCaptureButton");setBusy(b,true,"Reihe ein …");
+  try{const result=await provider.quickCapture(text);$("quickCaptureDialog").close();await loadGames();await refreshQueue();showMessage("Zur Warteschlange hinzugefügt",`${result.count||0} Spiel${result.count===1?"":"e"} wurden erfasst. Du kannst die App schließen; der Docker-Worker arbeitet weiter.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+}
+
 async function aiImageImport(files){
   files=[...files||[]];
   $("aiImageInput").value="";
@@ -445,13 +501,13 @@ Beide Modelle sind vom Docker-Backend erreichbar.`);
 
 async function switchMode(mode){
   if(isDocker()||!config.allowLocalMode)return;if(mode===currentMode)return;setModeValue(mode);
-  try{await selectProvider();await refreshConfig();await loadGames();showMessage("Betriebsmodus gewechselt",`Aktiv ist jetzt: ${modeLabel()}. Es wurden keine Daten zwischen Lokal und Server übertragen.`);}catch(err){showMessage("Server-Modus noch nicht bereit",err.message);showView("setup");}
+  try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();showMessage("Betriebsmodus gewechselt",`Aktiv ist jetzt: ${modeLabel()}. Es wurden keine Daten zwischen Lokal und Server übertragen.`);}catch(err){showMessage("Server-Modus noch nicht bereit",err.message);showView("setup");}
   await loadSetup();
 }
 function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
 
 function bindEvents(){
-  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("searchInput").addEventListener("input",renderGames);
+  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureButton").addEventListener("click",openQuickCapture);$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("closeQuickCaptureButton").addEventListener("click",()=>$("quickCaptureDialog").close());$("cancelQuickCaptureButton").addEventListener("click",()=>$("quickCaptureDialog").close());$("searchInput").addEventListener("input",renderGames);
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
   $("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
   $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));
@@ -461,7 +517,7 @@ function bindEvents(){
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
   $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
   const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
-  document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
+  document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
   window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
 }
 
@@ -472,7 +528,7 @@ async function init(){
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){
     currentMode="local";provider=new LocalProvider();$("modeBadge").textContent="Lokal";await loadSetup();$("firstRunDialog").showModal();return;
   }
-  try{await selectProvider();await refreshConfig();await loadGames();}catch(err){currentMode="server";$("modeBadge").textContent="Server";showBanner(err.message,"error");showView("setup");}
+  try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){currentMode="server";$("modeBadge").textContent="Server";showBanner(err.message,"error");showView("setup");}
   await loadSetup();
   if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}
 }

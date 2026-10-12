@@ -1,13 +1,13 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BACKUP_VERSION = 3
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3}
 
@@ -98,6 +98,34 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_attachments_game ON attachments(game_id);
             """)
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (3, utcnow()))
+
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 4 not in applied:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS import_jobs (
+                    id TEXT PRIMARY KEY,
+                    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                    query TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    progress TEXT NOT NULL DEFAULT '',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    error TEXT NOT NULL DEFAULT '',
+                    warnings_json TEXT NOT NULL DEFAULT '[]',
+                    sources_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT NOT NULL DEFAULT '',
+                    finished_at TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_import_jobs_status_created ON import_jobs(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_import_jobs_game ON import_jobs(game_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS runtime_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+            """)
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (4, utcnow()))
 
 
 def _int_or_none(value, minimum=None, maximum=None):
@@ -247,6 +275,159 @@ def delete_game(game_id):
     with connect() as conn:
         cur = conn.execute("DELETE FROM games WHERE id=?", (game_id,))
         return cur.rowcount > 0
+
+
+def _job_row(row):
+    if row is None:
+        return None
+    data = dict(row)
+    for key in ("warnings_json", "sources_json"):
+        try:
+            data[key[:-5]] = json.loads(data.pop(key) or "[]")
+        except json.JSONDecodeError:
+            data[key[:-5]] = []
+    return data
+
+
+def find_game_by_ean(ean):
+    digits = "".join(ch for ch in str(ean or "") if ch.isdigit())
+    if not digits:
+        return None
+    with connect() as conn:
+        return row_to_game(conn.execute("SELECT * FROM games WHERE ean=? LIMIT 1", (digits,)).fetchone())
+
+
+def find_game_by_title(title):
+    title = str(title or "").strip()
+    if not title:
+        return None
+    with connect() as conn:
+        return row_to_game(conn.execute("SELECT * FROM games WHERE title=? COLLATE NOCASE LIMIT 1", (title,)).fetchone())
+
+
+def enqueue_import_job(game_id, query, *, replace_active=False):
+    query = str(query or "").strip()[:500]
+    if not query:
+        raise ValueError("Für die automatische Ergänzung fehlt Titel oder EAN.")
+    now = utcnow()
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM games WHERE id=?", (game_id,)).fetchone():
+            raise ValueError("Spiel wurde nicht gefunden.")
+        active = conn.execute("SELECT * FROM import_jobs WHERE game_id=? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1", (game_id,)).fetchone()
+        if active and not replace_active:
+            return _job_row(active)
+        if active and replace_active:
+            conn.execute("UPDATE import_jobs SET status='cancelled', progress='Durch neuen Auftrag ersetzt', updated_at=?, finished_at=? WHERE id=?", (now, now, active['id']))
+        import uuid
+        job_id = str(uuid.uuid4())
+        conn.execute("INSERT INTO import_jobs(id,game_id,query,status,progress,attempts,error,warnings_json,sources_json,created_at,updated_at,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (job_id, game_id, query, 'queued', 'Wartet auf automatische Ergänzung', 0, '', '[]', '[]', now, now, '', ''))
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        return _job_row(row)
+
+
+def list_import_jobs(limit=100):
+    try:
+        limit = max(1, min(int(limit), 500))
+    except Exception:
+        limit = 100
+    with connect() as conn:
+        rows = conn.execute("""SELECT j.*, g.title AS game_title, g.ean AS game_ean
+                             FROM import_jobs j JOIN games g ON g.id=j.game_id
+                             ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, j.created_at DESC
+                             LIMIT ?""", (limit,)).fetchall()
+        return [_job_row(r) for r in rows]
+
+
+def get_import_job(job_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        return _job_row(row)
+
+
+def retry_import_job(job_id):
+    now = utcnow()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        if row['status'] == 'running':
+            raise ValueError("Ein laufender Auftrag kann nicht erneut gestartet werden.")
+        conn.execute("UPDATE import_jobs SET status='queued', progress='Wartet auf erneuten Versuch', error='', warnings_json='[]', sources_json='[]', updated_at=?, started_at='', finished_at='' WHERE id=?", (now, job_id))
+        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+def cancel_import_job(job_id):
+    now = utcnow()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return False
+        if row['status'] == 'running':
+            raise ValueError("Ein bereits laufender Auftrag kann nicht sicher abgebrochen werden.")
+        conn.execute("UPDATE import_jobs SET status='cancelled', progress='Abgebrochen', updated_at=?, finished_at=? WHERE id=?", (now, now, job_id))
+        return True
+
+
+def claim_import_job(stale_minutes=30):
+    now = utcnow()
+    stale_before = (datetime.now(timezone.utc) - timedelta(minutes=max(5, int(stale_minutes)))).isoformat().replace('+00:00', 'Z')
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE import_jobs SET status='queued', progress='Nach Worker-Neustart erneut eingereiht', updated_at=?, started_at='' WHERE status='running' AND started_at<>'' AND started_at<?", (now, stale_before))
+        row = conn.execute("SELECT * FROM import_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1").fetchone()
+        if not row:
+            conn.commit()
+            return None
+        conn.execute("UPDATE import_jobs SET status='running', progress='Recherche wird gestartet', attempts=attempts+1, error='', updated_at=?, started_at=?, finished_at='' WHERE id=? AND status='queued'", (now, now, row['id']))
+        claimed = conn.execute("SELECT * FROM import_jobs WHERE id=?", (row['id'],)).fetchone()
+        conn.commit()
+        return _job_row(claimed)
+
+
+def update_import_job(job_id, *, status=None, progress=None, error=None, warnings=None, sources=None, finished=False):
+    fields = ["updated_at=?"]
+    values = [utcnow()]
+    if status is not None:
+        fields.append("status=?"); values.append(str(status)[:30])
+    if progress is not None:
+        fields.append("progress=?"); values.append(str(progress)[:500])
+    if error is not None:
+        fields.append("error=?"); values.append(str(error)[:2000])
+    if warnings is not None:
+        fields.append("warnings_json=?"); values.append(json.dumps(list(warnings)[:20], ensure_ascii=False))
+    if sources is not None:
+        fields.append("sources_json=?"); values.append(json.dumps(list(sources)[:20], ensure_ascii=False))
+    if finished:
+        fields.append("finished_at=?"); values.append(utcnow())
+    values.append(job_id)
+    with connect() as conn:
+        conn.execute(f"UPDATE import_jobs SET {', '.join(fields)} WHERE id=?", values)
+        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+def set_runtime_state(key, value):
+    now = utcnow()
+    with connect() as conn:
+        conn.execute("INSERT INTO runtime_state(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at", (str(key)[:100], str(value)[:1000], now))
+
+
+def get_runtime_state(key):
+    with connect() as conn:
+        row = conn.execute("SELECT value,updated_at FROM runtime_state WHERE key=?", (key,)).fetchone()
+        return dict(row) if row else None
+
+
+def worker_state():
+    state = get_runtime_state('import_worker')
+    if not state:
+        return {"status": "offline", "updated_at": "", "message": "Noch kein Worker-Heartbeat empfangen."}
+    try:
+        updated = datetime.fromisoformat(state['updated_at'].replace('Z', '+00:00'))
+        age = (datetime.now(timezone.utc) - updated).total_seconds()
+    except Exception:
+        age = 999999
+    return {"status": "online" if age < 30 else "offline", "updated_at": state['updated_at'], "message": state['value']}
 
 
 def make_backup(reason="manual"):

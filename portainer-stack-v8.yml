@@ -1,0 +1,89 @@
+x-app-build: &app-build
+  context: https://github.com/Ashguard85/Regal-docker.git#main
+
+x-app-environment: &app-environment
+  APP_TITLE: "Brettspielregal"
+  APP_URL: "http://192.168.1.127:8190"
+  SECRET_KEY: "${SECRET_KEY}"
+  PWA_ALLOWED_ORIGIN: "http://192.168.1.127:8190"
+  BACKUP_KEEP: "50"
+
+  AI_IMPORT_ENABLED: "true"
+  AI_PROVIDER: "ollama"
+  OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+  OLLAMA_TEXT_MODEL: "qwen3:14b"
+  OLLAMA_VISION_MODEL: "gemma3:12b"
+  OLLAMA_TIMEOUT_SECONDS: "600"
+  AI_MAX_PAGE_CHARS: "16000"
+
+  RULE_SEARCH_PROVIDER: "none"
+  WEB_FALLBACK_PROVIDER: "none"
+
+  # v8: automatische Hintergrund-Recherche
+  AUTO_ENRICH_ENABLED: "true"
+  AUTO_ENRICH_NEW_GAMES: "true"
+  AUTO_ENRICH_POLL_SECONDS: "5"
+  AUTO_SEARCH_PROVIDER: "searxng"
+  SEARXNG_BASE_URL: "http://searxng:8080"
+  AUTO_SEARCH_RESULTS: "8"
+  AUTO_FETCH_PAGES: "4"
+  AUTO_RESEARCH_MAX_CHARS: "30000"
+
+services:
+  app:
+    image: brettspielregal:local
+    build: *app-build
+    ports:
+      - "8190:8080"
+    volumes:
+      - /home/buebi/docker/brettspielregal/data:/app/data
+      - /home/buebi/docker/brettspielregal/backups:/app/data/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *app-environment
+    labels:
+      homepage.group: "Spiele"
+      homepage.name: "Brettspielregal"
+      homepage.href: "http://192.168.1.127:8190"
+      homepage.description: "Meine Brettspielsammlung"
+      homepage.showStats: "true"
+    restart: unless-stopped
+
+  worker:
+    image: brettspielregal:local
+    build: *app-build
+    command: ["python", "-m", "app.import_worker"]
+    volumes:
+      - /home/buebi/docker/brettspielregal/data:/app/data
+      - /home/buebi/docker/brettspielregal/backups:/app/data/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *app-environment
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET}"
+      FORCE_OWNERSHIP: "false"
+    configs:
+      - source: searxng_settings
+        target: /etc/searxng/settings.yml
+    restart: unless-stopped
+
+configs:
+  searxng_settings:
+    content: |
+      use_default_settings: true
+      general:
+        instance_name: "Brettspielregal Search"
+      search:
+        safe_search: 1
+        formats:
+          - html
+          - json
+      server:
+        limiter: false
+        image_proxy: false
