@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.5.1",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.5.2",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -176,6 +176,7 @@ export class ServerProvider{
   }
   searchRules(game){return this.request("/api/ai/rules-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:90000});}
   importQueue(){return this.request("/api/import-queue",{timeoutMs:20000});}
+  cleanupImportQueue(mode="history"){return this.request("/api/import-queue/cleanup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode}),timeoutMs:30000});}
   quickCapture(text,storageLocation="",enrich=true){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,storage_location:storageLocation,enrich:enrich!==false}),timeoutMs:60000});}
   enqueueEnrichment(gameId,query="",replaceActive=false){return this.request(`/api/import-queue/games/${encodeURIComponent(gameId)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query,replace_active:replaceActive}),timeoutMs:20000});}
   approveImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/approve`,{method:"POST",timeoutMs:20000});}

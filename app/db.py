@@ -460,6 +460,31 @@ def cancel_import_job(job_id):
         return True
 
 
+def cleanup_import_jobs(mode="history"):
+    """Delete queue/history rows without deleting games. Running jobs are always protected.
+
+    history: failed/cancelled/done/verified
+    including_review: history + review (pending suggestions cascade with the job)
+    all_non_running: every job except running, including queued jobs and review suggestions
+    """
+    mode = str(mode or "history")
+    if mode not in {"history", "including_review", "all_non_running"}:
+        raise ValueError("Unbekannter Aufräummodus.")
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        before = conn.execute("SELECT COUNT(*) FROM import_jobs").fetchone()[0]
+        running = conn.execute("SELECT COUNT(*) FROM import_jobs WHERE status='running'").fetchone()[0]
+        if mode == "history":
+            conn.execute("DELETE FROM import_jobs WHERE status IN ('failed','cancelled','done','verified')")
+        elif mode == "including_review":
+            conn.execute("DELETE FROM import_jobs WHERE status IN ('failed','cancelled','done','verified','review')")
+        else:
+            conn.execute("DELETE FROM import_jobs WHERE status<>'running'")
+        after = conn.execute("SELECT COUNT(*) FROM import_jobs").fetchone()[0]
+        conn.commit()
+        return {"deleted": before - after, "remaining": after, "running_protected": running}
+
+
 def claim_import_job(stale_minutes=30):
     now = utcnow()
     stale_before = (datetime.now(timezone.utc) - timedelta(minutes=max(5, int(stale_minutes)))).isoformat().replace('+00:00', 'Z')

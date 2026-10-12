@@ -72,3 +72,34 @@ def test_only_review_job_can_be_approved():
             assert False, "queued job must not be approved"
         except ValueError:
             pass
+
+
+def test_cleanup_import_jobs_keeps_running_and_can_remove_reviews():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        for idx, title in enumerate(["Running", "Failed", "Review", "Queued"], 1):
+            db.save_game(db.normalize_game({"id": f"g{idx}", "title": title}))
+        running = db.enqueue_import_job("g1", "Running")
+        db.claim_import_job()
+        failed = db.enqueue_import_job("g2", "Failed")
+        db.update_import_job(failed["id"], status="failed", progress="Fehler", finished=True)
+        review = db.enqueue_import_job("g3", "Review")
+        db.update_import_job(review["id"], status="review", progress="Prüfen", finished=True)
+        db.replace_import_suggestions(review["id"], "g3", {"title":"Review", "description":"Vorschlag"}, db.get_game("g3"))
+        queued = db.enqueue_import_job("g4", "Queued")
+
+        result = db.cleanup_import_jobs("history")
+        assert result["deleted"] == 1
+        assert db.get_import_job(running["id"])["status"] == "running"
+        assert db.get_import_job(review["id"])["status"] == "review"
+        assert db.get_import_job(queued["id"])["status"] == "queued"
+
+        result = db.cleanup_import_jobs("including_review")
+        assert result["deleted"] == 1
+        assert db.get_import_job(review["id"]) is None
+        assert db.list_import_suggestions(review["id"]) == []
+
+        result = db.cleanup_import_jobs("all_non_running")
+        assert result["deleted"] == 1
+        assert result["running_protected"] == 1
+        assert db.get_import_job(running["id"])["status"] == "running"

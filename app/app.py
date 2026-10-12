@@ -49,7 +49,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.5.1",
+            version="8.5.2",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -127,6 +127,14 @@ def create_app(test_config=None):
     def import_queue():
         if request.method == "OPTIONS": return ("", 204)
         return jsonify(jobs=db.list_import_jobs(150), worker=db.worker_state())
+
+    @app.route("/api/import-queue/cleanup", methods=["POST", "OPTIONS"])
+    def cleanup_import_queue():
+        if request.method == "OPTIONS": return ("", 204)
+        payload = request.get_json(silent=True) or {}
+        try: result = db.cleanup_import_jobs(payload.get("mode") or "history")
+        except ValueError as exc: return jsonify(error=str(exc)), 400
+        return jsonify(result)
 
     @app.route("/api/import-queue/quick", methods=["POST", "OPTIONS"])
     def quick_capture():

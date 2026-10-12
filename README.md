@@ -1,6 +1,11 @@
-# Brettspielregal – Docker Fullstack v8.5.1
+# Brettspielregal – Docker Fullstack v8.5.2
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
+
+
+## Neu in v8.5.2
+
+Die Hintergrund-Warteschlange kann jetzt direkt im Import-Tab aufgeräumt werden. Fehler/Verlauf lassen sich entfernen; optional können auch offene KI-Prüfungen samt temporären Vorschlägen oder alle nicht laufenden Aufträge gelöscht werden. Spiele selbst werden dabei niemals gelöscht und laufende Worker-Aufträge bleiben geschützt.
 
 ## Neu in v8.5.1
 
@@ -92,7 +97,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.1.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.2.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 
@@ -110,6 +115,7 @@ Die fachlichen Quellen und Prompts werden dagegen im App-Setup gepflegt und pers
 ## Neue/erweiterte API-Routen
 
 - `GET /api/import-queue`
+- `POST /api/import-queue/cleanup`
 - `POST /api/import-queue/quick`
 - `POST /api/import-queue/games/<game_id>`
 - `POST /api/import-queue/<job_id>/retry`

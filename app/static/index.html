@@ -93,7 +93,7 @@ Dorfromantik"></textarea></label>
         </form>
 
         <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
-          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Warteschlange & Prüfung</h3></div><span class="import-step">2</span></div>
+          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Warteschlange & Prüfung</h3></div><div class="queue-head-actions"><button id="cleanupQueueButton" class="button subtle queue-cleanup-button" type="button">Aufräumen</button><span class="import-step">2</span></div></div>
           <p id="queueSummary" class="muted">Keine Aufträge.</p>
           <div id="queueList" class="queue-list"></div>
         </section>
@@ -181,7 +181,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.5.1</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.5.2</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -249,6 +249,8 @@ amazon.de"></textarea>
   <dialog id="messageDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2 id="messageTitle">Hinweis</h2><button id="closeMessageButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="messageBody" class="message-body"></div><div class="dialog-actions"><span class="spacer"></span><button id="messageOkButton" class="button primary" type="button">OK</button></div></div></dialog>
 
 
+
+  <dialog id="queueCleanupDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><div><p class="eyebrow">Hintergrund-Import</p><h2>Warteschlange aufräumen</h2></div><button id="closeQueueCleanupButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div class="message-body queue-cleanup-options"><p>Spiele in deiner Sammlung bleiben immer erhalten. Ein gerade laufender Auftrag wird ebenfalls nie gelöscht.</p><button type="button" class="cleanup-choice" data-cleanup-mode="history"><strong>Fehler & Verlauf löschen</strong><span>Entfernt fehlgeschlagene, abgebrochene, erledigte und bereits geprüfte Einträge.</span></button><button type="button" class="cleanup-choice" data-cleanup-mode="including_review"><strong>Auch offene Prüfungen löschen</strong><span>Verwirft zusätzlich noch nicht freigegebene temporäre KI-Vorschläge.</span></button><button type="button" class="cleanup-choice danger-choice" data-cleanup-mode="all_non_running"><strong>Alles außer laufendem Auftrag leeren</strong><span>Entfernt zusätzlich wartende Recherchen. Diese werden danach nicht mehr ausgeführt.</span></button></div></div></dialog>
 
   <dialog id="metadataPreviewDialog" class="dialog"><div class="dialog-card"><div class="dialog-head"><div><p class="eyebrow">Import-Vorschau</p><h2 id="metadataPreviewTitle">Gefundene Daten prüfen</h2></div><button id="closeMetadataPreviewButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="metadataPreviewBody" class="message-body"></div><div class="dialog-actions"><button id="cancelMetadataPreviewButton" class="button" type="button">Abbrechen</button><span class="spacer"></span><button id="applyMetadataPreviewButton" class="button primary" type="button">Vorschläge übernehmen</button></div></div></dialog>
 

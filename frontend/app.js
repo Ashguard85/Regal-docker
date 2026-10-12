@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.1",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.2",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -176,6 +176,8 @@ function renderQueue(){
   panel.classList.toggle("hidden",!ready);unavailable.classList.toggle("hidden",ready);
   $("quickCaptureInput").disabled=!captureReady;$("submitQuickCaptureButton").disabled=!captureReady;
   updateResearchControls();
+  const cleanupButton=$("cleanupQueueButton");
+  if(cleanupButton) cleanupButton.disabled=!importJobs.some(j=>j.status!=="running");
   if(!ready){$("workerBadge").textContent="Nicht aktiv";$("workerBadge").classList.add("offline");return;}
   const active=importJobs.filter(j=>["queued","running"].includes(j.status));
   const attention=importJobs.filter(j=>["review","failed"].includes(j.status));
@@ -192,6 +194,27 @@ function renderQueue(){
   $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
   $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
 }
+function openQueueCleanup(){
+  const dlg=$("queueCleanupDialog");
+  if(!dlg)return;
+  dlg.showModal();
+}
+async function cleanupQueue(mode){
+  const dlg=$("queueCleanupDialog");
+  if(mode==="including_review"&&!confirm("Offene KI-Vorschläge wirklich verwerfen und aus der Warteschlange entfernen?"))return;
+  if(mode==="all_non_running"&&!confirm("Wirklich alle nicht laufenden Aufträge löschen? Wartende Recherchen werden dadurch abgebrochen und offene KI-Vorschläge verworfen."))return;
+  const button=dlg?.querySelector(`[data-cleanup-mode="${mode}"]`);
+  setBusy(button,true,"Räume auf …");
+  try{
+    const result=await provider.cleanupImportQueue(mode);
+    if(dlg?.open)dlg.close();
+    await refreshQueue(true);
+    const protectedText=result.running_protected?` ${result.running_protected} laufender Auftrag blieb geschützt.`:"";
+    showMessage("Warteschlange aufgeräumt",`${result.deleted||0} Eintrag${result.deleted===1?"":"e"} entfernt.${protectedText}`);
+  }catch(err){showMessage("Aufräumen fehlgeschlagen",err.message);}
+  finally{setBusy(button,false);}
+}
+
 async function refreshQueue(forceGames=false){
   if(!researchAvailable()){importJobs=[];renderQueue();return;}
   try{
@@ -651,6 +674,7 @@ function showView(view){document.querySelectorAll(".view").forEach(v=>v.classLis
 
 function bindEvents(){
   $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("quickCaptureUseAi")?.addEventListener("change",updateResearchControls);$("searchInput").addEventListener("input",renderGames);
+  $("cleanupQueueButton")?.addEventListener("click",openQueueCleanup);$("closeQueueCleanupButton")?.addEventListener("click",()=>$("queueCleanupDialog")?.close());document.querySelectorAll("[data-cleanup-mode]").forEach(b=>b.addEventListener("click",()=>cleanupQueue(b.dataset.cleanupMode)));
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
   $("tagFilterButton").addEventListener("click",()=>{const panel=$("tagFilterPanel"),open=panel.classList.contains("hidden");panel.classList.toggle("hidden",!open);$("tagFilterButton").setAttribute("aria-expanded",String(open));if(open)renderTagFilters();});
   $("clearTagFiltersButton").addEventListener("click",()=>{selectedTagFilters.clear();localStorage.removeItem("brettspielregal-tag-filters");renderGames();});
