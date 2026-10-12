@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.5.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.5.1",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 

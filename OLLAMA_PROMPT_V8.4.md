@@ -1,8 +1,8 @@
-# Empfohlener Ollama-Prompt für Qwen3 14B – Brettspielregal v8.4
+# Empfohlener Ollama-Prompt für Qwen3 14B – Brettspielregal v8.5
 
-v8.4 enthält diese Regeln bereits als Standard unter **Setup → Automatische Recherche – Quellen & Prompt**.
+v8.5 enthält diese Regeln bereits als Standard unter **Setup → Automatische Recherche – Quellen & Prompt**.
 
-Wenn du zuvor einen eigenen Prompt gespeichert hast, bleibt er absichtlich erhalten. Um diesen v8.4-Standard zu laden, im Setup **Auf Standard zurücksetzen** wählen.
+Wenn du zuvor einen eigenen Prompt gespeichert hast, bleibt er absichtlich erhalten. Um diesen v8.5-Standard zu laden, im Setup **Auf Standard zurücksetzen** wählen.
 
 ## System-Prompt
 

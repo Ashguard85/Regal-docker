@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.1",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -308,8 +308,8 @@ function openGame(game=null){
   renderTagPicker();renderEditAttachments(game);
   const researchRow=$("newGameResearchRow"),researchToggle=$("newGameAutoEnrich");
   const showResearch=!game&&currentMode==="server";
-  researchRow.classList.toggle("hidden",!showResearch);
-  if(showResearch){researchToggle.disabled=!researchAvailable();researchToggle.checked=researchAvailable();}
+  if(researchRow&&researchToggle){researchRow.classList.toggle("hidden",!showResearch);
+  if(showResearch){researchToggle.disabled=!researchAvailable();researchToggle.checked=researchAvailable();}}
   $("gameDialog").showModal();setTimeout(()=>$("titleInput").focus(),50);
 }
 function sizeText(bytes){return bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(bytes/1024))} KB`;}
@@ -431,7 +431,7 @@ async function saveGame(event){
   event.preventDefault();const data=formGame();if(!data.title){showMessage("Titel fehlt","Bitte gib einen Titel ein.");return;}
   const submit=$("gameForm").querySelector('button[type="submit"]');setBusy(submit,true,"Speichere …");
   try{
-    const id=$("gameId").value;const saved=id?await provider.update(id,data):await provider.create(data,{autoEnrich:$("newGameAutoEnrich").checked});
+    const id=$("gameId").value;const researchToggle=$("newGameAutoEnrich");const saved=id?await provider.update(id,data):await provider.create(data,{autoEnrich:!!researchToggle?.checked});
     $("gameId").value=saved.id;
     for(let i=0;i<pendingFiles.length;){
       try{await provider.addAttachment(saved.id,pendingFiles[i]);pendingFiles.splice(i,1);}
@@ -492,8 +492,8 @@ async function processMagicImport(payload){
 async function submitQuickCapture(event){
   event.preventDefault();const text=$("quickCaptureInput").value.trim();if(!text)return;
   if(currentMode!=="server"){showMessage("Nur im Server-Modus","Die Schnellerfassung steht im Server-Modus zur Verfügung.");return;}
-  const enrich=$("quickCaptureUseAi").checked;
-  if(enrich&&!researchAvailable()){showMessage("KI-Recherche nicht aktiv","Deaktiviere "Mit KI recherchieren" oder aktiviere die Hintergrund-Recherche im Server-Setup.");return;}
+  const enrich=!!$("quickCaptureUseAi")?.checked;
+  if(enrich&&!researchAvailable()){showMessage("KI-Recherche nicht aktiv","Deaktiviere „Mit KI recherchieren“ oder aktiviere die Hintergrund-Recherche im Server-Setup.");return;}
   const b=$("submitQuickCaptureButton");setBusy(b,true,enrich?"Reihe ein …":"Erfasse …");
   try{
     const result=await provider.quickCapture(text,$("quickCaptureLocation").value.trim(),enrich);$("quickCaptureInput").value="";await loadGames();if(enrich)await refreshQueue();
@@ -650,7 +650,7 @@ async function switchMode(mode){
 function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
 
 function bindEvents(){
-  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("quickCaptureUseAi").addEventListener("change",updateResearchControls);$("searchInput").addEventListener("input",renderGames);
+  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("quickCaptureUseAi")?.addEventListener("change",updateResearchControls);$("searchInput").addEventListener("input",renderGames);
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
   $("tagFilterButton").addEventListener("click",()=>{const panel=$("tagFilterPanel"),open=panel.classList.contains("hidden");panel.classList.toggle("hidden",!open);$("tagFilterButton").setAttribute("aria-expanded",String(open));if(open)renderTagFilters();});
   $("clearTagFiltersButton").addEventListener("click",()=>{selectedTagFilters.clear();localStorage.removeItem("brettspielregal-tag-filters");renderGames();});

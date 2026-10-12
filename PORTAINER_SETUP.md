@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.5.0
+# Portainer Stack – Brettspielregal v8.5.1
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 

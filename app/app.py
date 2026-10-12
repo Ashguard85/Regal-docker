@@ -49,7 +49,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.5.0",
+            version="8.5.1",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,

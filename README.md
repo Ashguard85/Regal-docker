@@ -1,8 +1,13 @@
-# Brettspielregal – Docker Fullstack v8.5.0
+# Brettspielregal – Docker Fullstack v8.5.1
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
-## Neu in v8.5
+## Neu in v8.5.1
+
+### Hotfix: Frontend startet wieder zuverlässig
+
+Ein Syntaxfehler in der neuen KI-Opt-out-Meldung aus v8.5.0 wurde behoben. Zusätzlich lädt der Service Worker die App-Kerndateien jetzt network-first und fällt nur offline auf den Cache zurück. Das verhindert Versionsmischungen nach Updates auf iPhone/PWA.
+
 
 ### KI pro Erfassung abschaltbar
 
@@ -87,7 +92,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.1.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

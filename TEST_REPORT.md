@@ -1,9 +1,9 @@
-# Test Report – v8.5.0
+# Test Report – v8.5.1
 
 ## Ausgeführt
 
 - Python `py_compile` für Backendmodule
-- JavaScript `node --check` für Frontendmodule
+- JavaScript-Syntaxprüfung im ES-Modulmodus (`node --input-type=module --check`) für Frontendmodule
 - DOM-ID-Abgleich zwischen `index.html` und `app.js`
 - Backend-Kerntests ohne Flask: **36 bestanden**
 
@@ -22,6 +22,8 @@ Die Tests decken u. a. ab:
 - Feld-für-Feld-Übernahme/Verwerfen ohne vorheriges Überschreiben
 - KI-Opt-out-Pfade in API/Frontend statisch geprüft
 - iPhone-Textskalierung (`text-size-adjust`, 16-px-Formfelder) geprüft
+- v8.5.0-Syntaxregression reproduziert und mit ES-Modul-Syntaxcheck abgesichert
+- Service-Worker-Cache auf network-first für App-Dateien umgestellt
 
 ## Nicht in dieser Build-Umgebung ausführbar
 
