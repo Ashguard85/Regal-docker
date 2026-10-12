@@ -10,6 +10,7 @@ from .ai_import import import_from_url, import_from_text, import_from_images, se
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 from .research_search import search_provider_name as auto_search_provider_name
 from .research_config import get_settings as get_research_settings, save_settings as save_research_settings, reset_settings as reset_research_settings
+from .tags import tag_catalog, normalize_tags
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -48,12 +49,13 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.2.0",
+            version="8.4.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
             auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
             auto_search_provider=auto_search_provider_name(),
+            tag_catalog=tag_catalog(),
             **public_ai,
         )
 
@@ -75,6 +77,24 @@ def create_app(test_config=None):
             return jsonify(error=str(exc)), 400
 
 
+
+
+    @app.route("/api/tags/cleanup", methods=["POST", "OPTIONS"])
+    def cleanup_tags():
+        if request.method == "OPTIONS": return ("", 204)
+        changed = 0
+        removed = 0
+        for game in db.list_games():
+            old = list(game.get("tags") or [])
+            new = normalize_tags(old, limit=12)
+            if old == new:
+                continue
+            removed += max(0, len(old) - len(new))
+            payload = dict(game)
+            payload["tags"] = new
+            db.save_game(db.normalize_game(payload, game))
+            changed += 1
+        return jsonify(changed_games=changed, removed_tags=removed, tag_catalog=tag_catalog())
 
     @app.route("/api/ai/status", methods=["GET", "OPTIONS"])
     def ai_status():
@@ -121,6 +141,7 @@ def create_app(test_config=None):
             lines = [x.strip() for x in raw_text.splitlines() if x.strip()]
         if not lines:
             return jsonify(error="Bitte mindestens einen Titel oder eine EAN eingeben."), 400
+        storage_location = str(payload.get("storage_location") or "").strip()[:180]
         if len(lines) > 100:
             return jsonify(error="Pro Schnellerfassung sind maximal 100 Einträge erlaubt."), 400
         created = []
@@ -131,9 +152,13 @@ def create_app(test_config=None):
             if existing:
                 game = existing
                 reused = True
+                if storage_location and not game.get("storage_location"):
+                    payload_game = dict(game); payload_game["storage_location"] = storage_location
+                    game = db.normalize_game(payload_game, game); game["id"] = existing["id"]
+                    db.save_game(game)
             else:
                 game_id = str(uuid.uuid4())
-                raw = {"id": game_id, "title": f"EAN {digits}" if is_ean else line[:180], "ean": digits if is_ean else ""}
+                raw = {"id": game_id, "title": f"EAN {digits}" if is_ean else line[:180], "ean": digits if is_ean else "", "storage_location": storage_location}
                 try:
                     game = db.normalize_game(raw)
                 except ValueError as exc:
@@ -166,11 +191,36 @@ def create_app(test_config=None):
 
     @app.route("/api/import-queue/<job_id>/approve", methods=["POST", "OPTIONS"])
     def approve_import_job(job_id):
+        """Compatibility endpoint: v8.4 applies all pending AI suggestions explicitly."""
         if request.method == "OPTIONS": return ("", 204)
-        try: job = db.approve_import_job(job_id)
+        try: result = db.apply_import_suggestions(job_id)
         except ValueError as exc: return jsonify(error=str(exc)), 409
-        if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
-        return jsonify(job)
+        if not result: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(result)
+
+    @app.route("/api/import-queue/<job_id>/suggestions/apply", methods=["POST", "OPTIONS"])
+    def apply_import_suggestions(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        payload = request.get_json(silent=True) or {}
+        fields = payload.get("fields")
+        if fields is not None and not isinstance(fields, list):
+            return jsonify(error="fields muss eine Liste sein."), 400
+        try: result = db.apply_import_suggestions(job_id, fields)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not result: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(result)
+
+    @app.route("/api/import-queue/<job_id>/suggestions/reject", methods=["POST", "OPTIONS"])
+    def reject_import_suggestions(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        payload = request.get_json(silent=True) or {}
+        fields = payload.get("fields")
+        if fields is not None and not isinstance(fields, list):
+            return jsonify(error="fields muss eine Liste sein."), 400
+        try: result = db.reject_import_suggestions(job_id, fields)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not result: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(result)
 
     @app.route("/api/import-queue/<job_id>", methods=["DELETE", "OPTIONS"])
     def cancel_import_job(job_id):

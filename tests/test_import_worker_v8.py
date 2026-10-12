@@ -15,7 +15,7 @@ def setup(tmp):
     return db, worker
 
 
-def test_worker_processes_job_and_updates_game(monkeypatch):
+def test_worker_processes_job_and_stages_suggestions(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db, worker = setup(tmp)
         game = db.normalize_game({"id": "g1", "title": "Sky Team"})
@@ -35,7 +35,14 @@ def test_worker_processes_job_and_updates_game(monkeypatch):
         worker.process_job(job)
         updated = db.get_game("g1")
         final = db.get_import_job(job["id"])
-        assert updated["publisher"] == "Beispiel"
-        assert updated["play_time_min"] == 20
-        assert final["status"] == "done"
+        assert updated["publisher"] == ""
+        assert updated["play_time_min"] is None
+        assert final["status"] == "review"
         assert final["sources"] == ["https://example.com/sky-team"]
+        pending={x["field"]:x["value"] for x in final["suggestions"] if x["status"]=="pending"}
+        assert pending["publisher"] == "Beispiel"
+        assert pending["play_time_min"] == 20
+        applied=db.apply_import_suggestions(job["id"],["publisher"])
+        assert applied["applied"] == ["publisher"]
+        assert db.get_game("g1")["publisher"] == "Beispiel"
+        assert db.get_game("g1")["play_time_min"] is None

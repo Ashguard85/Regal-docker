@@ -57,7 +57,7 @@ def test_review_job_can_be_approved():
         db.update_import_job(job["id"], status="review", progress="Bitte prüfen", warnings=["Cover unsicher"], finished=True)
         approved = db.approve_import_job(job["id"])
         assert approved["status"] == "verified"
-        assert approved["progress"] == "Geprüft und bestätigt"
+        assert approved["progress"] == "Vorschläge geprüft"
         assert approved["warnings"] == ["Cover unsicher"]
 
 

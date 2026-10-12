@@ -46,7 +46,7 @@ def test_migration_from_v2_preserves_games_and_adds_attachment_table():
         assert db.get_game("old")["cover_attachment_id"] == ""
         with db.connect() as conn:
             assert conn.execute("SELECT count(*) FROM attachments").fetchone()[0] == 0
-            assert {r[0] for r in conn.execute("SELECT version FROM schema_migrations")} == {1,2,3,4,5}
+            assert {r[0] for r in conn.execute("SELECT version FROM schema_migrations")} == {1,2,3,4,5,6}
 
 
 def test_attachment_backup_and_merge_preserve_files():
@@ -63,7 +63,7 @@ def test_attachment_backup_and_merge_preserve_files():
         db.save_game(db.normalize_game(game,game))
         assert len(db.get_game("g1")["attachments"])==2
         backup=db.backup_payload()
-        assert backup["version"]==3
+        assert backup["version"]==4
         assert len(backup["data"]["attachments"])==2
         assert base64.b64decode(backup["data"]["attachments"][0]["content_base64"]) in (PNG,PDF)
         assert db.preview_import(backup)["same"]==1

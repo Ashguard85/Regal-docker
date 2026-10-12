@@ -52,7 +52,7 @@ def searxng_search(query, limit=None):
         response = requests.get(
             f"{base}/search",
             params={"q": query, "format": "json", "language": "de", "safesearch": "1"},
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.0"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.4"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -97,10 +97,19 @@ def search(query):
     rows = []
     # Primärquellen zuerst gezielt anfragen. SearXNG reicht site:-Operatoren an die Suchmaschinen weiter.
     primary = settings.get("primary_domains") or []
-    if primary:
-        domain_clause = " OR ".join(f"site:{d}" for d in primary[:8])
+    reference = settings.get("reference_domains") or []
+    preferred = (primary + reference)[:10]
+    if preferred:
+        domain_clause = " OR ".join(f"site:{d}" for d in preferred)
         try:
-            rows.extend(searxng_search(f"{query} ({domain_clause})", limit=10))
+            rows.extend(searxng_search(f"{query} ({domain_clause})", limit=12))
+        except ResearchSearchError:
+            pass
+    # BoardGameGeek gezielt zusätzlich anfragen, weil Titel und IDs häufig besser matchen als bei Shops.
+    if reference:
+        ref_clause = " OR ".join(f"site:{d}" for d in reference[:4])
+        try:
+            rows.extend(searxng_search(f"{query} ({ref_clause})", limit=6))
         except ResearchSearchError:
             pass
     rows.extend(searxng_search(query))
@@ -112,7 +121,7 @@ def search(query):
         row = dict(row)
         row["trust"] = source_trust(url, settings)
         dedup[url] = row
-    order = {"primary": 0, "normal": 1, "low": 2}
+    order = {"primary": 0, "reference": 1, "normal": 2, "low": 3}
     return sorted(dedup.values(), key=lambda x: order.get(x.get("trust"), 1))[:15]
 
 
@@ -139,6 +148,8 @@ def research_game(query):
         if trust == "low":
             chunks.append("Niedrig priorisierte Quelle: nicht direkt als Kerndatenquelle abrufen.\n")
             continue
+        if trust == "reference":
+            chunks.append("Strukturierte Referenzquelle: für allgemeine Spieldaten nutzen; deutsche Ausgabe, EAN, Cover und Anleitung gegen Herstellerdaten prüfen.\n")
         if fetched >= max_pages:
             continue
         try:

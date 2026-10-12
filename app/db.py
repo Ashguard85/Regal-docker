@@ -7,14 +7,14 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 5
-BACKUP_VERSION = 3
-SUPPORTED_BACKUP_VERSIONS = {1, 2, 3}
+SCHEMA_VERSION = 6
+BACKUP_VERSION = 4
+SUPPORTED_BACKUP_VERSIONS = {1, 2, 3, 4}
 
 GAME_COLUMNS = [
     "id", "title", "description", "source_url", "rules_url", "rules_text",
     "min_players", "max_players", "play_time_min", "min_age", "publisher", "year",
-    "designer", "ean", "cover_url", "award", "cover_attachment_id", "tags_json", "notes", "created_at", "updated_at"
+    "designer", "ean", "cover_url", "award", "cover_attachment_id", "storage_location", "tags_json", "notes", "created_at", "updated_at"
 ]
 
 
@@ -138,6 +138,27 @@ def init_db():
             """)
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (5, utcnow()))
 
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 6 not in applied:
+            if "storage_location" not in _columns(conn, "games"):
+                conn.execute("ALTER TABLE games ADD COLUMN storage_location TEXT NOT NULL DEFAULT ''")
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS import_suggestions (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
+                    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                    field TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(job_id, field)
+                );
+                CREATE INDEX IF NOT EXISTS idx_import_suggestions_job ON import_suggestions(job_id, status);
+                CREATE INDEX IF NOT EXISTS idx_import_suggestions_game ON import_suggestions(game_id, status);
+            """)
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (6, utcnow()))
+
 
 def get_app_settings(keys=None):
     with connect() as conn:
@@ -217,6 +238,7 @@ def normalize_game(raw, existing=None):
         "cover_url": _text(raw, existing, "cover_url", 2000),
         "award": _text(raw, existing, "award", 500),
         "cover_attachment_id": _text(raw, existing, "cover_attachment_id", 80),
+        "storage_location": _text(raw, existing, "storage_location", 180),
         "tags": tags[:30],
         "notes": _text(raw, existing, "notes", 6000),
         "created_at": str(existing.get("created_at") or raw.get("created_at") or now),
@@ -232,7 +254,7 @@ def row_to_game(row):
         d["tags"] = json.loads(d.pop("tags_json") or "[]")
     except json.JSONDecodeError:
         d["tags"] = []
-    for key in ("designer", "ean", "cover_url", "award", "cover_attachment_id"):
+    for key in ("designer", "ean", "cover_url", "award", "cover_attachment_id", "storage_location"):
         d.setdefault(key, "")
     return d
 
@@ -366,23 +388,45 @@ def enqueue_import_job(game_id, query, *, replace_active=False):
         return _job_row(row)
 
 
+def _suggestion_row(row):
+    if row is None:
+        return None
+    data = dict(row)
+    try:
+        data["value"] = json.loads(data.pop("value_json"))
+    except (json.JSONDecodeError, TypeError):
+        data["value"] = None
+    return data
+
+
+def _suggestions_for_conn(conn, job_id):
+    rows = conn.execute("SELECT * FROM import_suggestions WHERE job_id=? ORDER BY created_at, field", (job_id,)).fetchall()
+    return [_suggestion_row(r) for r in rows]
+
+
 def list_import_jobs(limit=100):
     try:
         limit = max(1, min(int(limit), 500))
     except Exception:
         limit = 100
     with connect() as conn:
-        rows = conn.execute("""SELECT j.*, g.title AS game_title, g.ean AS game_ean
+        rows = conn.execute("""SELECT j.*, g.title AS game_title, g.ean AS game_ean, g.storage_location AS game_storage_location
                              FROM import_jobs j JOIN games g ON g.id=j.game_id
                              ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, j.created_at DESC
                              LIMIT ?""", (limit,)).fetchall()
-        return [_job_row(r) for r in rows]
+        jobs = [_job_row(r) for r in rows]
+        for job in jobs:
+            job["suggestions"] = _suggestions_for_conn(conn, job["id"])
+        return jobs
 
 
 def get_import_job(job_id):
     with connect() as conn:
         row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
-        return _job_row(row)
+        job = _job_row(row)
+        if job:
+            job["suggestions"] = _suggestions_for_conn(conn, job_id)
+        return job
 
 
 def retry_import_job(job_id):
@@ -393,20 +437,15 @@ def retry_import_job(job_id):
             return None
         if row['status'] == 'running':
             raise ValueError("Ein laufender Auftrag kann nicht erneut gestartet werden.")
+        conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
         conn.execute("UPDATE import_jobs SET status='queued', progress='Wartet auf erneuten Versuch', error='', warnings_json='[]', sources_json='[]', updated_at=?, started_at='', finished_at='' WHERE id=?", (now, job_id))
         return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
 
 
 def approve_import_job(job_id):
-    now = utcnow()
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
-        if not row:
-            return None
-        if row['status'] != 'review':
-            raise ValueError("Nur ein Auftrag mit Status ‚Bitte prüfen‘ kann bestätigt werden.")
-        conn.execute("UPDATE import_jobs SET status='verified', progress='Geprüft und bestätigt', error='', updated_at=?, finished_at=? WHERE id=?", (now, now, job_id))
-        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+    """Compatibility helper: approval means explicitly applying all pending suggestions."""
+    result = apply_import_suggestions(job_id)
+    return get_import_job(job_id) if result is not None else None
 
 
 def cancel_import_job(job_id):
@@ -456,6 +495,116 @@ def update_import_job(job_id, *, status=None, progress=None, error=None, warning
     with connect() as conn:
         conn.execute(f"UPDATE import_jobs SET {', '.join(fields)} WHERE id=?", values)
         return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+AI_SUGGESTIBLE_FIELDS = {
+    "title", "description", "source_url", "rules_url", "rules_text",
+    "min_players", "max_players", "play_time_min", "min_age", "publisher",
+    "year", "designer", "ean", "cover_url", "award", "tags"
+}
+
+
+def replace_import_suggestions(job_id, game_id, proposed_game, current_game):
+    """Replace temporary AI proposals for a job without touching the approved game row."""
+    now = utcnow()
+    import uuid
+    rows = []
+    for field in sorted(AI_SUGGESTIBLE_FIELDS):
+        proposed = proposed_game.get(field)
+        current = current_game.get(field)
+        if proposed in (None, "", []):
+            continue
+        if proposed == current:
+            continue
+        rows.append((str(uuid.uuid4()), job_id, game_id, field, json.dumps(proposed, ensure_ascii=False), "pending", now, now))
+    with connect() as conn:
+        conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
+        conn.executemany("INSERT INTO import_suggestions(id,job_id,game_id,field,value_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", rows)
+    return len(rows)
+
+
+def list_import_suggestions(job_id, status=None):
+    with connect() as conn:
+        if status:
+            rows = conn.execute("SELECT * FROM import_suggestions WHERE job_id=? AND status=? ORDER BY created_at, field", (job_id, status)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM import_suggestions WHERE job_id=? ORDER BY created_at, field", (job_id,)).fetchall()
+        return [_suggestion_row(r) for r in rows]
+
+
+def _finish_job_if_no_pending(conn, job_id):
+    pending = conn.execute("SELECT COUNT(*) FROM import_suggestions WHERE job_id=? AND status='pending'", (job_id,)).fetchone()[0]
+    if pending == 0:
+        now = utcnow()
+        conn.execute("UPDATE import_jobs SET status='verified', progress='Vorschläge geprüft', updated_at=?, finished_at=? WHERE id=?", (now, now, job_id))
+    else:
+        conn.execute("UPDATE import_jobs SET status='review', progress=?, updated_at=? WHERE id=?", (f"{pending} Vorschlag{' ist' if pending == 1 else 'e sind'} noch offen", utcnow(), job_id))
+    return pending
+
+
+def apply_import_suggestions(job_id, fields=None):
+    """Apply explicitly approved proposal fields to the current game row."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        job = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            conn.rollback(); return None
+        if job["status"] != "review":
+            conn.rollback(); raise ValueError("Nur offene KI-Vorschläge können übernommen werden.")
+        game_row = conn.execute("SELECT * FROM games WHERE id=?", (job["game_id"],)).fetchone()
+        if not game_row:
+            conn.rollback(); raise ValueError("Spiel wurde nicht gefunden.")
+        game = row_to_game(game_row)
+        params = [job_id]
+        sql = "SELECT * FROM import_suggestions WHERE job_id=? AND status='pending'"
+        if fields is not None:
+            allowed = [str(f) for f in fields if str(f) in AI_SUGGESTIBLE_FIELDS]
+            if not allowed:
+                conn.rollback(); raise ValueError("Keine gültigen Vorschlagsfelder ausgewählt.")
+            sql += " AND field IN (" + ",".join("?" for _ in allowed) + ")"
+            params.extend(allowed)
+        rows = conn.execute(sql, params).fetchall()
+        if not rows:
+            pending = _finish_job_if_no_pending(conn, job_id)
+            conn.commit()
+            return {"game": game, "applied": [], "pending": pending}
+        payload = dict(game)
+        applied = []
+        ids = []
+        for row in rows:
+            item = _suggestion_row(row)
+            payload[item["field"]] = item["value"]
+            applied.append(item["field"]); ids.append(item["id"])
+        normalized = normalize_game(payload, game); normalized["id"] = game["id"]
+        _upsert_game(conn, normalized)
+        placeholders = ",".join("?" for _ in ids)
+        now = utcnow()
+        conn.execute(f"UPDATE import_suggestions SET status='accepted', updated_at=? WHERE id IN ({placeholders})", [now, *ids])
+        pending = _finish_job_if_no_pending(conn, job_id)
+        conn.commit()
+        return {"game": normalized, "applied": applied, "pending": pending}
+
+
+def reject_import_suggestions(job_id, fields=None):
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        job = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            conn.rollback(); return None
+        if job["status"] != "review":
+            conn.rollback(); raise ValueError("Nur offene KI-Vorschläge können verworfen werden.")
+        params = [utcnow(), job_id]
+        sql = "UPDATE import_suggestions SET status='rejected', updated_at=? WHERE job_id=? AND status='pending'"
+        if fields is not None:
+            allowed = [str(f) for f in fields if str(f) in AI_SUGGESTIBLE_FIELDS]
+            if not allowed:
+                conn.rollback(); raise ValueError("Keine gültigen Vorschlagsfelder ausgewählt.")
+            sql += " AND field IN (" + ",".join("?" for _ in allowed) + ")"
+            params.extend(allowed)
+        conn.execute(sql, params)
+        pending = _finish_job_if_no_pending(conn, job_id)
+        conn.commit()
+        return {"pending": pending}
 
 
 def set_runtime_state(key, value):

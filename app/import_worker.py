@@ -67,14 +67,19 @@ def process_job(job):
     proposal["id"] = game["id"]
     normalized = db.normalize_game(proposal, game)
     normalized["id"] = game["id"]
-    db.save_game(normalized)
 
+    # v8.4: KI-Daten werden niemals direkt in games geschrieben. Sie bleiben als
+    # temporäre Feldvorschläge, bis der Benutzer sie ausdrücklich übernimmt.
+    suggestion_count = db.replace_import_suggestions(job_id, game["id"], normalized, game)
     warnings = result.get("warnings") or []
-    useful = sum(1 for key in ("description", "publisher", "year", "designer", "ean", "cover_url", "rules_url", "min_players", "play_time_min", "min_age") if normalized.get(key) not in (None, "", []))
-    status = "review" if warnings or useful < 3 else "done"
-    progress = "Automatisch ergänzt – bitte kurz prüfen" if status == "review" else "Automatisch ergänzt"
-    db.update_import_job(job_id, status=status, progress=progress, error="", warnings=warnings, sources=research["sources"], finished=True)
-    _set_message(f"Fertig ({status}): {normalized.get('title') or job['query']}")
+    if suggestion_count:
+        progress = f"{suggestion_count} KI-Vorschlag{' ist' if suggestion_count == 1 else 'e sind'} zur Prüfung bereit"
+        db.update_import_job(job_id, status="review", progress=progress, error="", warnings=warnings, sources=research["sources"], finished=True)
+        _set_message(f"Vorschläge bereit ({suggestion_count}): {game.get('title') or job['query']}")
+    else:
+        progress = "Recherche abgeschlossen – keine neuen Angaben gefunden"
+        db.update_import_job(job_id, status="verified", progress=progress, error="", warnings=warnings, sources=research["sources"], finished=True)
+        _set_message(f"Keine neuen Vorschläge: {game.get('title') or job['query']}")
 
 
 def run():

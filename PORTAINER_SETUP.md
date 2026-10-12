@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.2.0
+# Portainer Stack – Brettspielregal v8.4.0
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -23,7 +23,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern.
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.2.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.4.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -149,14 +149,25 @@ Danach **Update the stack**.
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
-## v8.2 Bedienung
+## v8.4 Bedienung
 
-- **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht.
-- **Import**: Schnellerfassung, Workerstatus, Queue und Prüfaufträge.
-- **Setup**: Verbindung, Ollama, Backup und Betriebsmodus.
-- Ein Eintrag mit **Bitte prüfen** wird im Import-Tab über **Prüfen** geöffnet und kann anschließend mit **✓ Passt – geprüft** bestätigt werden.
-
+- **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht. Der **Lagerort** ist sichtbar und durchsuchbar.
+- **Import**: Schnellerfassung, optional ein Lagerort für die ganze Charge, Workerstatus und KI-Vorschläge.
+- Das Spiel erscheint sofort in der Sammlung. Der Worker schreibt Rechercheergebnisse **nicht** direkt in die freigegebenen Felder.
+- Bei **Vorschläge prüfen** siehst du je Feld **Aktuell** und **KI-Vorschlag** und kannst einzeln **Übernehmen**, **Verwerfen** oder **Alle Vorschläge übernehmen**.
+- **Setup**: Verbindung, Ollama, Quellen, Prompt, Backup und Betriebsmodus.
 
 ## Quellen und Prompt konfigurieren
 
-Nach dem Start in Brettspielregal unter **Setup → Automatische Recherche – Quellen & Prompt**. Diese fachlichen Regeln liegen persistent in SQLite. Ollama-URL, Modelle und Timeouts bleiben als Portainer-Umgebungsvariablen.
+Nach dem Start in Brettspielregal unter **Setup → Automatische Recherche – Quellen & Prompt**.
+
+Dort gibt es:
+
+- **Primärquellen** – Hersteller/Verlage
+- **Strukturierte Referenzquellen** – standardmäßig `boardgamegeek.com`
+- **Niedrig priorisierte Quellen** – Reviews/Händler
+- System-Prompt und Recherche-Prompt
+
+Alle frei formulierten KI-Werte sollen auf Deutsch gespeichert werden. BoardGameGeek darf als englische Referenz dienen, wird aber vor der Übernahme durch Qwen auf deutsche Beschreibungen/Tags normalisiert. Technische Werte wie Ollama-URL, Modelle und Timeouts bleiben in Portainer.
+
+Wenn bereits ein eigener Prompt aus v8.2/v8.3 gespeichert ist, wird er nicht überschrieben. Für den neuen v8.4-Standard im Setup **Auf Standard zurücksetzen** wählen. Siehe auch `OLLAMA_PROMPT_V8.4.md`.

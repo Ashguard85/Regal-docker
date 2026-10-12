@@ -1,20 +1,29 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.2.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.4.0",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
 const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
+const DEFAULT_TAG_CATALOG={
+  "Spielart":["Familienspiel","Kinderspiel","Kennerspiel","Expertenspiel","Partyspiel","Solospiel","Zweipersonenspiel","Kooperativ","Kompetitiv"],
+  "Mechanik":["Deckbau","Kartenauswahl","Arbeitereinsatz","Plättchenlegen","Sets sammeln","Risikoabwägung","Handkartenmanagement","Gebietskontrolle","Kombinationsaufbau","Würfeln & Eintragen","Deduktion","Versteigerung","Stichspiel","Geschicklichkeit","Gedächtnis","Rätsel","Kampagne","Routenbau","Mehrheiten","Würfelspiel","Kartenspiel"],
+  "Thema":["Fantasy","Science-Fiction","Abenteuer","Natur & Tiere","Historisch","Krimi","Wirtschaft","Weltraum","Eisenbahn","Städtebau","Landwirtschaft","Piraten","Horror"],
+  "Eigenschaften":["Schnell gelernt","Kurze Partie","Lange Partie","Strategisch","Taktisch","Glückslastig","Hohe Interaktion","Wenig Interaktion","Asymmetrisch","Hoher Wiederspielwert","Reisetauglich"]
+};
+let tagCatalog=DEFAULT_TAG_CATALOG;
+let selectedTagFilters=new Set((()=>{try{const v=JSON.parse(localStorage.getItem("brettspielregal-tag-filters")||"[]");return Array.isArray(v)?v:[];}catch{return [];}})());
 
 const FIELD_MAP=[
   ["title","Titel","titleInput"],["description","Beschreibung","descriptionInput"],["min_players","Spieler min.","minPlayersInput"],
   ["max_players","Spieler max.","maxPlayersInput"],["play_time_min","Spieldauer","playTimeInput"],["min_age","Mindestalter","minAgeInput"],
-  ["publisher","Verlag","publisherInput"],["year","Jahr","yearInput"],["designer","Autor / Designer","designerInput"],
+  ["publisher","Verlag","publisherInput"],["storage_location","Lagerort","storageLocationInput"],["year","Jahr","yearInput"],["designer","Autor / Designer","designerInput"],
   ["ean","EAN / GTIN","eanInput"],["award","Auszeichnung","awardInput"],["cover_url","Cover","coverUrlInput"],
   ["tags","Tags","tagsInput"],["rules_url","Anleitungs-Link","rulesUrlInput"],["rules_text","Kurzregeln","rulesTextInput"],
   ["source_url","Quelle","sourceUrlInput"]
 ];
+const FIELD_LABELS=Object.fromEntries(FIELD_MAP.map(([key,label])=>[key,label]));
 
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function nl2br(s){return esc(s).replace(/\n/g,"<br>");}
@@ -31,6 +40,45 @@ function normalizeUrl(url){return (url||"").trim().replace(/\/$/,"");}
 function inputNumber(id){const v=$(id).value;return v===""?null:Number(v);}
 function safeHttpsUrl(value){try{const u=new URL(String(value||""));return u.protocol==="https:"?u.href:"";}catch{return "";}}
 function valueText(key,value){if(Array.isArray(value))return value.join(", ");if(value===null||value===undefined)return "";if(key==="play_time_min"&&value)return `${value} Min.`;if(key==="min_age"&&value!=="")return `ab ${value}`;return String(value);}
+function catalogTags(){return Object.values(tagCatalog||{}).flat();}
+function tagCategory(tag){for(const [category,tags] of Object.entries(tagCatalog||{}))if(tags.includes(tag))return category;return "Sonstige";}
+function selectedTagsFromInput(){return $("tagsInput").value.split(",").map(x=>x.trim()).filter(Boolean);}
+function setSelectedTags(tags){$("tagsInput").value=[...new Set((tags||[]).map(x=>String(x).trim()).filter(Boolean))].join(", ");renderTagPicker();}
+function renderTagPicker(){
+  const root=$("tagPicker");if(!root)return;
+  const selected=new Set(selectedTagsFromInput());
+  const groups=[];
+  for(const [category,tags] of Object.entries(tagCatalog||{})){
+    groups.push(`<div class="tag-picker-group"><strong>${esc(category)}</strong><div class="tag-picker-options">${tags.map(tag=>`<button type="button" class="tag-picker-chip ${selected.has(tag)?"active":""}" data-tag-pick="${esc(tag)}" aria-pressed="${selected.has(tag)}">${esc(tag)}</button>`).join("")}</div></div>`);
+  }
+  const known=new Set(catalogTags()),legacy=[...selected].filter(tag=>!known.has(tag));
+  if(legacy.length)groups.push(`<div class="tag-picker-group tag-picker-legacy"><strong>Bestehende freie Tags</strong><p class="hint">Diese stammen aus älteren Einträgen. Antippen entfernt sie.</p><div class="tag-picker-options">${legacy.map(tag=>`<button type="button" class="tag-picker-chip active" data-tag-pick="${esc(tag)}" aria-pressed="true">${esc(tag)} ×</button>`).join("")}</div></div>`);
+  root.innerHTML=groups.join("");
+  root.querySelectorAll("[data-tag-pick]").forEach(b=>b.addEventListener("click",()=>{const tag=b.dataset.tagPick,current=new Set(selectedTagsFromInput());if(current.has(tag))current.delete(tag);else current.add(tag);$("tagsInput").value=[...current].join(", ");renderTagPicker();}));
+}
+function tagFilterMatches(game){
+  if(!selectedTagFilters.size)return true;
+  const gameTags=new Set(game.tags||[]),byCategory={};
+  for(const tag of selectedTagFilters){const category=tagCategory(tag);(byCategory[category]||(byCategory[category]=[])).push(tag);}
+  return Object.values(byCategory).every(tags=>tags.some(tag=>gameTags.has(tag)));
+}
+function renderTagFilters(){
+  const root=$("tagFilterGroups");if(!root)return;
+  const allowed=new Set(catalogTags());let pruned=false;for(const tag of [...selectedTagFilters])if(!allowed.has(tag)){selectedTagFilters.delete(tag);pruned=true;}if(pruned)localStorage.setItem("brettspielregal-tag-filters",JSON.stringify([...selectedTagFilters]));
+  const counts={};for(const game of games)for(const tag of game.tags||[])counts[tag]=(counts[tag]||0)+1;
+  const groups=[];
+  for(const [category,tags] of Object.entries(tagCatalog||{})){
+    const visible=tags.filter(tag=>(counts[tag]||0)>0||selectedTagFilters.has(tag));if(!visible.length)continue;
+    groups.push(`<div class="tag-filter-group"><strong>${esc(category)}</strong><div class="tag-filter-options">${visible.map(tag=>`<button type="button" class="tag-filter-chip ${selectedTagFilters.has(tag)?"active":""}" data-tag-filter="${esc(tag)}" aria-pressed="${selectedTagFilters.has(tag)}">${esc(tag)} <span class="tag-count">${counts[tag]||0}</span></button>`).join("")}</div></div>`);
+  }
+  root.innerHTML=groups.join("")||'<p class="hint">Noch keine kontrollierten Tags in deiner Sammlung.</p>';
+  root.querySelectorAll("[data-tag-filter]").forEach(b=>b.addEventListener("click",()=>{const tag=b.dataset.tagFilter;if(selectedTagFilters.has(tag))selectedTagFilters.delete(tag);else selectedTagFilters.add(tag);localStorage.setItem("brettspielregal-tag-filters",JSON.stringify([...selectedTagFilters]));renderGames();}));
+  const count=$("tagFilterCount");count.textContent=String(selectedTagFilters.size);count.classList.toggle("hidden",selectedTagFilters.size===0);
+}
+function detailTagGroups(tags){
+  const grouped={};for(const tag of tags||[]){const category=tagCategory(tag);(grouped[category]||(grouped[category]=[])).push(tag);}
+  return Object.entries(grouped).map(([category,values])=>`<div class="detail-tag-group"><strong>${esc(category)}</strong><div class="detail-tag-chips">${values.map(tag=>detailChip(tag)).join("")}</div></div>`).join("");
+}
 function decodeBase64Url(value){
   const clean=String(value||"").replace(/-/g,"+").replace(/_/g,"/");
   const padded=clean+"=".repeat((4-clean.length%4)%4);
@@ -81,7 +129,8 @@ async function refreshConfig(){
     rulesSearchProvider=c.rules_search_provider||"none";
     autoEnrichEnabled=!!c.auto_enrich_enabled;
     autoSearchProvider=c.auto_search_provider||"none";
-  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";aiVisionModel="";rulesSearchProvider="none";autoEnrichEnabled=false;autoSearchProvider="none";}
+    if(c.tag_catalog&&typeof c.tag_catalog==="object")tagCatalog=c.tag_catalog;
+  }catch{aiEnabled=false;rulesSearchEnabled=false;aiProvider="none";aiModel="";aiVisionModel="";rulesSearchProvider="none";autoEnrichEnabled=false;autoSearchProvider="none";tagCatalog=DEFAULT_TAG_CATALOG;}
   $("aiImportRow").classList.toggle("hidden",currentMode!=="server"||!aiEnabled);
   $("rulesSearchButton").disabled=!rulesSearchEnabled;
   $("rulesSearchButton").title=rulesSearchProvider==="openai"?"Offizielle Anleitung mit serverseitiger Websuche verifizieren":"Anleitungs-Link auf der Quellseite suchen; externe Websuche ist deaktiviert";
@@ -104,7 +153,7 @@ function latestJobForGame(gameId){
 }
 function jobStatusMeta(job){
   if(!job)return null;
-  const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Bitte prüfen","review"],verified:["Geprüft","verified"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
+  const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Vorschläge prüfen","review"],verified:["Geprüft","verified"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
   const [label,kind]=map[job.status]||[job.status||"Status",""];
   return {label,kind};
 }
@@ -122,8 +171,9 @@ function renderQueue(){
   const shown=importJobs.filter(j=>["running","queued","review","failed"].includes(j.status)).slice(0,30);
   $("queueList").innerHTML=shown.map(job=>{
     const m=jobStatusMeta(job),review=job.status==="review",failed=job.status==="failed";
-    const actions=review?`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">Prüfen</button></div>`:failed?`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`:"";
-    return `<div class="queue-row ${review?"review-row":""}"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${actions}</div>`;
+    const pending=(job.suggestions||[]).filter(x=>x.status==="pending").length;
+    const actions=review?`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">${pending?`${pending} Vorschläge prüfen`:"Prüfen"}</button></div>`:failed?`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`:"";
+    return `<div class="queue-row ${review?"review-row":""}"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.game_storage_location?` · 📍 ${esc(job.game_storage_location)}`:""}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${actions}</div>`;
   }).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
   $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
   $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
@@ -191,8 +241,9 @@ function hydrateCovers(scope){
 function renderGames(){
   releaseCovers("list");
   const q=$("searchInput").value.trim().toLocaleLowerCase("de");
-  const filtered=games.filter(g=>!q||[g.title,g.description,g.publisher,g.designer,g.ean,g.award,g.notes,...(g.tags||[])].join(" ").toLocaleLowerCase("de").includes(q));
-  $("collectionCount").textContent=q?`${filtered.length} von ${games.length} Spielen`:`${games.length} ${games.length===1?"Spiel":"Spiele"}`;
+  const filtered=games.filter(g=>(!q||[g.title,g.description,g.publisher,g.designer,g.ean,g.award,g.storage_location,g.notes,...(g.tags||[])].join(" ").toLocaleLowerCase("de").includes(q))&&tagFilterMatches(g));
+  const narrowed=!!q||selectedTagFilters.size>0;
+  $("collectionCount").textContent=narrowed?`${filtered.length} von ${games.length} Spielen`:`${games.length} ${games.length===1?"Spiel":"Spiele"}`;
   $("emptyState").classList.toggle("hidden",games.length!==0);
   const list=$("gameList");list.innerHTML="";list.classList.toggle("shelf-view",collectionView==="shelf");
   for(const g of filtered){
@@ -200,13 +251,14 @@ function renderGames(){
     if(g.min_players||g.max_players)meta.push({text:`${g.min_players||"?"}–${g.max_players||g.min_players||"?"} Spieler`,kind:"core"});
     if(g.play_time_min)meta.push({text:`${g.play_time_min} Min.`,kind:"core"});
     if(g.min_age!==null&&g.min_age!==undefined&&g.min_age!=="")meta.push({text:`ab ${g.min_age}`,kind:"core"});
+    if(g.storage_location)meta.push({text:`📍 ${g.storage_location}`,kind:"location"});
     if(g.publisher)meta.push({text:g.publisher,kind:""});
     if(g.year)meta.push({text:String(g.year),kind:""});
     if(g.award)meta.push({text:g.award,kind:"award"});
     for(const tag of (g.tags||[]).slice(0,2))meta.push({text:tag,kind:""});
     if(collectionView==="shelf"){
       card.className="game-card shelf-card";
-      const subline=[g.publisher,g.year].filter(Boolean).join(" · ")||(g.designer?`von ${g.designer}`:"Meine Sammlung");
+      const subline=[g.storage_location?`📍 ${g.storage_location}`:"",g.publisher,g.year].filter(Boolean).join(" · ")||(g.designer?`von ${g.designer}`:"Meine Sammlung");
       card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
     }else{
       card.className="game-card";
@@ -215,13 +267,13 @@ function renderGames(){
     card.querySelector("button").addEventListener("click",()=>openGameDetail(g.id));list.append(card);
   }
   if(games.length&&filtered.length===0)list.innerHTML='<div class="empty-state"><strong>Nichts gefunden</strong><p>Versuche einen anderen Suchbegriff.</p></div>';
-  updateViewButtons();hydrateCovers("list");
+  updateViewButtons();renderTagFilters();hydrateCovers("list");
 }
 
 function clearGameForm(){
   pendingFiles=[];$("gameAttachmentInput").value="";$("pendingAttachmentList").innerHTML="";$("existingAttachmentList").innerHTML="";$("attachmentFormStatus").textContent="";
-  for(const id of ["gameId","titleInput","sourceUrlInput","descriptionInput","minPlayersInput","maxPlayersInput","playTimeInput","minAgeInput","publisherInput","yearInput","designerInput","eanInput","awardInput","coverUrlInput","tagsInput","rulesUrlInput","rulesTextInput","notesInput"])$(id).value="";
-  renderCoverPreview();
+  for(const id of ["gameId","titleInput","sourceUrlInput","descriptionInput","minPlayersInput","maxPlayersInput","playTimeInput","minAgeInput","publisherInput","storageLocationInput","yearInput","designerInput","eanInput","awardInput","coverUrlInput","tagsInput","rulesUrlInput","rulesTextInput","notesInput"])$(id).value="";
+  renderCoverPreview();renderTagPicker();
 }
 function renderCoverPreview(){
   const url=safeHttpsUrl($("coverUrlInput").value);
@@ -235,11 +287,11 @@ function openGame(game=null){
   if(game){
     $("gameId").value=game.id;$("titleInput").value=game.title||"";$("sourceUrlInput").value=game.source_url||"";$("descriptionInput").value=game.description||"";
     $("minPlayersInput").value=game.min_players??"";$("maxPlayersInput").value=game.max_players??"";$("playTimeInput").value=game.play_time_min??"";$("minAgeInput").value=game.min_age??"";
-    $("publisherInput").value=game.publisher||"";$("yearInput").value=game.year??"";$("designerInput").value=game.designer||"";$("eanInput").value=game.ean||"";$("awardInput").value=game.award||"";$("coverUrlInput").value=game.cover_url||"";
+    $("publisherInput").value=game.publisher||"";$("storageLocationInput").value=game.storage_location||"";$("yearInput").value=game.year??"";$("designerInput").value=game.designer||"";$("eanInput").value=game.ean||"";$("awardInput").value=game.award||"";$("coverUrlInput").value=game.cover_url||"";
     $("tagsInput").value=(game.tags||[]).join(", ");$("rulesUrlInput").value=game.rules_url||"";$("rulesTextInput").value=game.rules_text||"";$("notesInput").value=game.notes||"";
     renderCoverPreview();
   }
-  renderEditAttachments(game);
+  renderTagPicker();renderEditAttachments(game);
   $("gameDialog").showModal();setTimeout(()=>$("titleInput").focus(),50);
 }
 function sizeText(bytes){return bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(bytes/1024))} KB`;}
@@ -273,21 +325,34 @@ function openGameDetail(gameId){
   if(game.play_time_min)chips.push(detailChip(`${game.play_time_min} Min.`,"core"));
   if(game.min_age!==null&&game.min_age!==undefined&&game.min_age!=="")chips.push(detailChip(`ab ${game.min_age}`,"core"));
   if(game.award)chips.push(detailChip(game.award,"award"));
-  for(const tag of game.tags||[])chips.push(detailChip(tag));
-  const facts=[["Verlag",game.publisher],["Jahr",game.year],["Autor / Designer",game.designer],["EAN / GTIN",game.ean]].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
+  const facts=[["Lagerort",game.storage_location],["Verlag",game.publisher],["Jahr",game.year],["Autor / Designer",game.designer],["EAN / GTIN",game.ean]].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
   const images=(game.attachments||[]).filter(a=>a.kind==="image"),pdfs=(game.attachments||[]).filter(a=>a.kind==="rules"),selected=imageAttachment(game);
   const imageGallery=images.length?`<div class="attachment-gallery">${images.map(a=>`<div class="attachment-tile ${selected?.id===a.id?"cover-selected":""}">${coverHtml(game,"tile-image",a)}<strong>${esc(a.filename)}</strong><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Ansehen</button><button class="button" type="button" data-cover-attachment="${esc(a.id)}" ${selected?.id===a.id?"disabled":""}>${selected?.id===a.id?"Cover ✓":"Als Cover"}</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
   const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button><button class="button" type="button" data-download-attachment="${esc(a.id)}">Laden</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
   const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
-  const reviewJob=latestJobForGame(game.id),needsReview=reviewJob?.status==="review";
+  const reviewJob=latestJobForGame(game.id);
+  const pendingSuggestions=(reviewJob?.suggestions||[]).filter(x=>x.status==="pending");
+  const needsReview=reviewJob?.status==="review"&&pendingSuggestions.length>0;
   const sourceItems=(reviewJob?.sources||[]).map(url=>{try{const u=new URL(url);return `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(u.hostname.replace(/^www\./,""))}</a></li>`;}catch{return "";}}).join("");
-  const warningPanel=needsReview?`<section class="detail-panel review-panel"><h4>Automatische Ergänzung prüfen</h4><p class="hint">Der Worker hat die Daten gespeichert, konnte aber nicht alles eindeutig bestätigen. Prüfe besonders diese Hinweise:</p>${reviewJob.warnings?.length?`<ul class="review-warning-list">${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:`<p class="detail-notes">Bitte die automatisch ergänzten Angaben kurz gegen Cover, Hersteller oder Anleitung prüfen.</p>`}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}</section>`:"";
+  const fmtSuggestion=(field,value)=>{if(value===null||value===undefined||value===""||(Array.isArray(value)&&!value.length))return "—";return valueText(field,value);};
+  const suggestionRows=pendingSuggestions.map(item=>{
+    const field=item.field,label=FIELD_LABELS[field]||field,current=game[field],proposed=item.value;
+    const coverPreview=field==="cover_url"&&safeHttpsUrl(proposed)?`<img class="suggestion-cover" src="${esc(safeHttpsUrl(proposed))}" alt="KI-Covervorschlag" referrerpolicy="no-referrer">`:"";
+    return `<div class="suggestion-row"><div class="suggestion-field"><strong>${esc(label)}</strong></div><div class="suggestion-values"><div><small>Aktuell</small><span>${esc(fmtSuggestion(field,current))}</span></div><div class="suggestion-proposed"><small>KI-Vorschlag</small>${coverPreview}<span>${esc(fmtSuggestion(field,proposed))}</span></div></div><div class="suggestion-actions"><button type="button" class="button primary" data-apply-suggestion="${esc(field)}">Übernehmen</button><button type="button" class="button subtle" data-reject-suggestion="${esc(field)}">Verwerfen</button></div></div>`;
+  }).join("");
+  const warningPanel=needsReview?`<section class="detail-panel review-panel"><div class="suggestion-head"><div><h4>KI-Vorschläge prüfen</h4><p class="hint">Noch nichts davon hat deine freigegebenen Spieldaten überschrieben. Übernimm nur, was passt.</p></div><span class="proposal-count">${pendingSuggestions.length}</span></div>${suggestionRows}${reviewJob.warnings?.length?`<div class="warning-box"><strong>Hinweise der Recherche</strong><ul>${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}<div class="suggestion-footer"><button type="button" class="button subtle" data-reject-all-suggestions>Alle verwerfen</button></div></section>`:"";
   $("detailTitle").textContent=game.title||"Spiel";
-  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section><section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
+  const tagPanel=(game.tags||[]).length?`<section class="detail-panel"><h4>Tags</h4><div class="detail-tag-groups">${detailTagGroups(game.tags)}</div></section>`:"";
+  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section>${tagPanel}<section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
   $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
   $("detailApproveButton").classList.toggle("hidden",!needsReview);
-  $("detailApproveButton").onclick=needsReview?async()=>{const b=$("detailApproveButton");setBusy(b,true,"Bestätige …");try{await provider.approveImportJob(reviewJob.id);await refreshQueue();$("gameDetailDialog").close();showView("import");showMessage("Als geprüft markiert",`${game.title} ist bestätigt und wurde aus der Prüfliste entfernt.`);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
-  const canReEnrich=currentMode==="server"&&autoEnrichEnabled&&!(["queued","running"].includes(reviewJob?.status));
+  $("detailApproveButton").onclick=needsReview?async()=>{const b=$("detailApproveButton");setBusy(b,true,"Übernehme …");try{await provider.applyImportSuggestions(reviewJob.id,null);await loadGames();await refreshQueue();openGameDetail(game.id);showMessage("Vorschläge übernommen","Alle noch offenen KI-Vorschläge wurden in die freigegebenen Spieldaten übernommen.");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
+  if(needsReview){
+    $("detailBody").querySelectorAll("[data-apply-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Übernehme …");try{await provider.applyImportSuggestions(reviewJob.id,[b.dataset.applySuggestion]);await loadGames();await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
+    $("detailBody").querySelectorAll("[data-reject-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,[b.dataset.rejectSuggestion]);await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
+    $("detailBody").querySelectorAll("[data-reject-all-suggestions]").forEach(b=>b.addEventListener("click",async()=>{if(!confirm("Alle offenen KI-Vorschläge für dieses Spiel verwerfen?"))return;setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,null);await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
+  }
+  const canReEnrich=currentMode==="server"&&autoEnrichEnabled&&!needsReview&&!(["queued","running"].includes(reviewJob?.status));
   $("detailReEnrichButton").classList.toggle("hidden",!canReEnrich);
   $("detailReEnrichButton").onclick=canReEnrich?async()=>{const b=$("detailReEnrichButton");setBusy(b,true,"Reihe ein …");try{await provider.enqueueEnrichment(game.id,game.ean||game.title,false);await refreshQueue();$("gameDetailDialog").close();showView("import");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
   const find=id=>(game.attachments||[]).find(a=>a.id===id);
@@ -332,7 +397,7 @@ async function addDetailFiles(files){
 function formGame(){return {
   title:$("titleInput").value.trim(),source_url:$("sourceUrlInput").value.trim(),description:$("descriptionInput").value.trim(),
   min_players:inputNumber("minPlayersInput"),max_players:inputNumber("maxPlayersInput"),play_time_min:inputNumber("playTimeInput"),min_age:inputNumber("minAgeInput"),
-  publisher:$("publisherInput").value.trim(),year:inputNumber("yearInput"),designer:$("designerInput").value.trim(),ean:$("eanInput").value.replace(/\s+/g,"").trim(),award:$("awardInput").value.trim(),cover_url:$("coverUrlInput").value.trim(),
+  publisher:$("publisherInput").value.trim(),storage_location:$("storageLocationInput").value.trim(),year:inputNumber("yearInput"),designer:$("designerInput").value.trim(),ean:$("eanInput").value.replace(/\s+/g,"").trim(),award:$("awardInput").value.trim(),cover_url:$("coverUrlInput").value.trim(),
   tags:$("tagsInput").value.split(",").map(x=>x.trim()).filter(Boolean),rules_url:$("rulesUrlInput").value.trim(),rules_text:$("rulesTextInput").value.trim(),notes:$("notesInput").value.trim()
 };}
 function applyProposal(d){
@@ -341,7 +406,7 @@ function applyProposal(d){
     if(value===null||value===undefined||value===""||(Array.isArray(value)&&value.length===0))continue;
     $(id).value=Array.isArray(value)?value.join(", "):value;
   }
-  renderCoverPreview();
+  renderCoverPreview();renderTagPicker();
 }
 
 async function saveGame(event){
@@ -410,7 +475,7 @@ async function submitQuickCapture(event){
   event.preventDefault();const text=$("quickCaptureInput").value.trim();if(!text)return;
   if(currentMode!=="server"||!autoEnrichEnabled){showMessage("Hintergrund-Import nicht aktiv","Bitte Server-Modus und automatische Ergänzung aktivieren.");return;}
   const b=$("submitQuickCaptureButton");setBusy(b,true,"Reihe ein …");
-  try{const result=await provider.quickCapture(text);$("quickCaptureInput").value="";await loadGames();await refreshQueue();showMessage("Zur Warteschlange hinzugefügt",`${result.count||0} Spiel${result.count===1?"":"e"} wurden erfasst. Der Worker arbeitet im Hintergrund weiter.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+  try{const result=await provider.quickCapture(text,$("quickCaptureLocation").value.trim());$("quickCaptureInput").value="";await loadGames();await refreshQueue();showMessage("Erfasst & Recherche gestartet",`${result.count||0} Spiel${result.count===1?"":"e"} sind sofort in der Sammlung. KI-Ergebnisse erscheinen später als prüfbare Vorschläge.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
 }
 
 async function aiImageImport(files){
@@ -495,6 +560,7 @@ async function loadSetup(){
     try{
       const r=await provider.researchSettings();
       $("primarySourcesInput").value=(r.primary_domains||[]).join("\n");
+      $("referenceSourcesInput").value=(r.reference_domains||[]).join("\n");
       $("lowTrustSourcesInput").value=(r.low_trust_domains||[]).join("\n");
       $("researchSystemPromptInput").value=r.system_prompt||"";
       $("researchPromptInput").value=r.research_prompt||"";
@@ -507,19 +573,31 @@ async function saveResearchSettings(event){
   try{
     const data=await provider.saveResearchSettings({
       primary_domains:$("primarySourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
+      reference_domains:$("referenceSourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
       low_trust_domains:$("lowTrustSourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
       system_prompt:$("researchSystemPromptInput").value,
       research_prompt:$("researchPromptInput").value,
     });
-    $("primarySourcesInput").value=(data.primary_domains||[]).join("\n");$("lowTrustSourcesInput").value=(data.low_trust_domains||[]).join("\n");
+    $("primarySourcesInput").value=(data.primary_domains||[]).join("\n");$("referenceSourcesInput").value=(data.reference_domains||[]).join("\n");$("lowTrustSourcesInput").value=(data.low_trust_domains||[]).join("\n");
     $("researchSettingsStatus").textContent="Gespeichert. Neue Worker-Aufträge verwenden diese Einstellungen.";
   }catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(submit,false);}
 }
 async function resetResearchSettings(){
-  if(!confirm("Primärquellen und Prompts auf die v8.2-Standardwerte zurücksetzen?"))return;
+  if(!confirm("Primärquellen und Prompts auf die v8.4-Standardwerte zurücksetzen?"))return;
   const b=$("resetResearchSettingsButton");setBusy(b,true,"Setze zurück …");
   try{await provider.resetResearchSettings();await loadSetup();$("researchSettingsStatus").textContent="Standardwerte wiederhergestellt.";}catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(b,false);}
 }
+async function cleanupExistingTags(){
+  if(currentMode!=="server")return;
+  if(!confirm("Bestehende Tags auf die kontrollierte Tag-Liste normalisieren? Unbekannte freie Tags werden entfernt."))return;
+  const b=$("cleanupTagsButton");setBusy(b,true,"Bereinige …");
+  try{
+    const result=await provider.cleanupTags();
+    $("cleanupTagsStatus").textContent=`${result.changed_games||0} Spiele geändert · ${result.removed_tags||0} alte Tags entfernt.`;
+    await loadGames();
+  }catch(err){$("cleanupTagsStatus").textContent=err.message;}finally{setBusy(b,false);}
+}
+
 async function saveConnection(event){event.preventDefault();const url=normalizeUrl($("backendUrl").value);if(url&&!/^https:\/\//i.test(url)){showMessage("Ungültige Backend-URL","Im externen Pages-Frontend ist nur eine öffentliche HTTPS-Backend-URL vorgesehen.");return;}await saveServerConnection({url,clientId:$("cfClientId").value.trim(),clientSecret:$("cfClientSecret").value});showMessage("Gespeichert","Die Server-Konfiguration wurde nur auf diesem Gerät gespeichert.");await loadSetup();if(currentMode==="server"){try{provider=await makeServerProvider();await refreshConfig();await loadGames();}catch{}}}
 async function clearSecrets(){if(!confirm("Gespeicherte Cloudflare-Zugangsdaten auf diesem Gerät löschen?"))return;await wipeServerSecrets();await loadSetup();showMessage("Zugangsdaten gelöscht","Client ID und Client Secret wurden aus IndexedDB entfernt.");}
 async function testConnection(){const b=$("testConnectionButton");setBusy(b,true,"Teste …");try{const srv=await makeServerProvider();const h=await srv.health();showMessage("Verbindung funktioniert",h.status==="ok"?"Backend ist erreichbar und meldet Status ok.":"Backend ist erreichbar.");}catch(err){showMessage("Verbindung fehlgeschlagen",err.message);}finally{setBusy(b,false);}}
@@ -551,20 +629,22 @@ function showView(view){document.querySelectorAll(".view").forEach(v=>v.classLis
 function bindEvents(){
   $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("searchInput").addEventListener("input",renderGames);
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
+  $("tagFilterButton").addEventListener("click",()=>{const panel=$("tagFilterPanel"),open=panel.classList.contains("hidden");panel.classList.toggle("hidden",!open);$("tagFilterButton").setAttribute("aria-expanded",String(open));if(open)renderTagFilters();});
+  $("clearTagFiltersButton").addEventListener("click",()=>{selectedTagFilters.clear();localStorage.removeItem("brettspielregal-tag-filters");renderGames();});
   $("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
   $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));
   $("gameAttachmentInput").addEventListener("change",e=>{addPendingFiles(e.target.files||[]);e.target.value="";});
   $("detailAttachmentInput").addEventListener("change",e=>addDetailFiles([...e.target.files||[]]));
   $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("aiImageButton").addEventListener("click",()=>$("aiImageInput").click());$("aiImageInput").addEventListener("change",e=>aiImageImport(e.target.files));$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
-  $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("researchSettingsForm").addEventListener("submit",saveResearchSettings);$("resetResearchSettingsButton").addEventListener("click",resetResearchSettings);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
+  $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("researchSettingsForm").addEventListener("submit",saveResearchSettings);$("resetResearchSettingsButton").addEventListener("click",resetResearchSettings);$("cleanupTagsButton").addEventListener("click",cleanupExistingTags);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
   const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
   document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
   window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
 }
 
 async function init(){
-  bindEvents();updateViewButtons();$("versionLabel").textContent=config.version;
+  bindEvents();updateViewButtons();renderTagPicker();$("versionLabel").textContent=config.version;
   pendingMagicImport=readMagicImport();
   if("serviceWorker" in navigator){navigator.serviceWorker.register("./service-worker.js").catch(()=>{});}
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){

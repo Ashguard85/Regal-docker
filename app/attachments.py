@@ -114,7 +114,7 @@ def read_file(attachment_id):
 
 
 def decode_backup_attachments(backup, game_ids):
-    if backup.get("version") != 3:
+    if backup.get("version") not in {3, 4}:
         return []
     raw = backup.get("data", {}).get("attachments", [])
     if not isinstance(raw, list) or len(raw) > MAX_BACKUP_ATTACHMENTS:

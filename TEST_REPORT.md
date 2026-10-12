@@ -1,48 +1,28 @@
-# Testbericht – Brettspielregal v8.2.0
+# Test Report – v8.4.0
 
-## Automatisch geprüft
+## Ausgeführt
 
-- Python-Syntax aller Backend-Module (`py_compile`)
-- JavaScript-Syntax (`node --check`) für `app.js`, `providers.js`, `db.js`, `config.js` und `service-worker.js`
-- HTML/JS-DOM-Abgleich: 109 per JavaScript referenzierte IDs, keine fehlenden IDs
-- CSS mit `tinycss2`: 271 Regeln, 0 Parserfehler
-- Manifest JSON validiert
-- Docker-Frontend erneut nach `app/static` gebaut
-- Docker-/Pages-Frontend-Parität geprüft (außer zielabhängiger `config.js`)
-- Service Worker: `brettspielregal-pwa-v8-2`
-- Portainer-/Compose-YAML geparst; Services `app`, `worker`, `searxng` vorhanden
+- Python `py_compile` für Backendmodule
+- JavaScript `node --check` für Frontendmodule
+- DOM-ID-Abgleich zwischen `index.html` und `app.js`
+- Backend-Kerntests ohne Flask: **35 bestanden**
 
-## Python-Kern-/Worker-Tests ohne Flask-Abhängigkeit
+Die Tests decken u. a. ab:
 
-**29 bestanden.** Abgedeckt sind unter anderem:
+- Datenbankmigration bis Schema 6
+- Backupformat 4 und Altimporte
+- Datei-/Anhangsspeicher
+- Queue und Worker
+- KI-Recherche und Qualitätsregeln
+- persistente Recherchekonfiguration
+- BoardGameGeek als Referenzquelle
+- deutsche kontrollierte Tags und Synonym-Normalisierung
+- Lagerort
+- temporäre KI-Vorschläge
+- Feld-für-Feld-Übernahme/Verwerfen ohne vorheriges Überschreiben
 
-- bestehende AI-/Ollama-Extraktion
-- Text- und Vision-Modellkonfiguration
-- SQLite-Migrationen bis Schema 5
-- persistente Backend-Rechercheeinstellungen
-- Validierung der Prompt-Pflicht-Platzhalter
-- Primär-/Low-Trust-Domain-Normalisierung
-- GTIN/EAN-Prüfziffer und Ablehnung `0000000000000`
-- Schutz des vom Benutzer erfassten Spieltitels vor Review-/Seitentiteln
-- Ablehnung von Review-/Fazit-Text als Kurzregeln
-- Backup-Kompatibilität der Spieldaten
-- Attachment-Storage
-- persistente Import-Queue
-- atomisches Claiming eines Jobs
-- Vermeidung doppelter aktiver Jobs
-- Titel-/EAN-Wiederverwendung bei Schnellerfassung
-- SearXNG-JSON-Auswertung und HTTPS-Filter
-- Background-Worker aktualisiert Spiele und Jobstatus
-- Review→Verified-Workflow
+## Nicht in dieser Build-Umgebung ausführbar
 
-## Flask-Integrationstests
+Die Flask-Integrationstests (`test_app.py`, `test_attachments_v6.py`) benötigen die Runtime-Abhängigkeit Flask. Flask ist in dieser Ausführungsumgebung nicht installiert. Im Docker-Image wird Flask regulär über `requirements.txt` installiert.
 
-Im Repository liegen **8 Flask-API-/Attachment-Tests**. In der aktuellen Ausführungsumgebung konnten sie nicht gestartet werden, weil Flask dort nicht installiert ist (`ModuleNotFoundError: flask`). Im Docker-Build wird Flask regulär aus `requirements.txt` installiert.
-
-## Nicht live getestet
-
-- echter Docker-/Portainer-Start
-- echte SearXNG-Suche gegen externe Suchmaschinen
-- echte Ollama-Inferenz mit `qwen3:14b`/`gemma3:12b`
-- externe Asset-Probes gegen reale Cover/PDF-CDNs
-- iPhone-PWA auf physischer Hardware
+Es wurden keine realen Requests an deinen Ollama-, SearXNG- oder Portainer-Host ausgeführt.

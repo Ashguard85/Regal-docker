@@ -40,13 +40,17 @@
             <p class="hero-text">Schnell finden, was du besitzt – inklusive Regeln, Cover und wichtigen Spieldaten.</p>
           </div>
         </div>
-        <label class="search-box"><span class="sr-only">Sammlung durchsuchen</span><span class="search-icon" aria-hidden="true"></span><input id="searchInput" type="search" placeholder="Titel, Verlag, Autor oder Tag suchen …" autocomplete="off"></label>
+        <label class="search-box"><span class="sr-only">Sammlung durchsuchen</span><span class="search-icon" aria-hidden="true"></span><input id="searchInput" type="search" placeholder="Titel, Verlag, Lagerort, Autor oder Tag suchen …" autocomplete="off"></label>
         <div class="collection-toolbar" aria-label="Sammlungsansicht wählen">
           <div class="view-toggle" role="group" aria-label="Sammlungsansicht">
             <button id="viewListButton" class="view-pill active" type="button" aria-pressed="true">Liste</button>
             <button id="viewShelfButton" class="view-pill" type="button" aria-pressed="false">Regal</button>
           </div>
-          <p class="collection-subhint">Eigene Bilder und Anleitungen direkt am Spiel speichern.</p>
+          <button id="tagFilterButton" class="button tag-filter-button" type="button" aria-expanded="false">Tags filtern <span id="tagFilterCount" class="filter-count hidden">0</span></button>
+        </div>
+        <div id="tagFilterPanel" class="tag-filter-panel hidden">
+          <div class="tag-filter-head"><div><strong>Sammlung filtern</strong><p class="hint">Innerhalb einer Kategorie gilt ODER, zwischen Kategorien UND.</p></div><button id="clearTagFiltersButton" class="button subtle" type="button">Zurücksetzen</button></div>
+          <div id="tagFilterGroups" class="tag-filter-groups"></div>
         </div>
         <div id="statusBanner" class="status-banner hidden" role="status"></div>
         <div id="gameList" class="game-list"></div>
@@ -83,7 +87,8 @@
 4002051698973
 Cascadia
 Dorfromantik"></textarea></label>
-          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Zur Warteschlange</button></div>
+          <label class="quick-capture-label">Lagerort für diese Einträge (optional)<input id="quickCaptureLocation" maxlength="180" placeholder="z. B. 1. Tablar"></label>
+          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang. Die Spiele erscheinen sofort in deiner Sammlung; KI-Daten bleiben zunächst Vorschläge.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Erfassen & recherchieren</button></div>
         </form>
 
         <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
@@ -133,6 +138,10 @@ Dorfromantik"></textarea></label>
 ravensburger.de"></textarea>
               <span class="hint">Diese Domains werden bevorzugt gesucht und gewichtet.</span>
             </label>
+            <label class="full">Strukturierte Referenzquellen – eine Domain pro Zeile
+              <textarea id="referenceSourcesInput" rows="4" placeholder="boardgamegeek.com"></textarea>
+              <span class="hint">Dienen zur Identifikation und Plausibilitätsprüfung. Englische Inhalte werden vor der Übernahme ins Deutsche normalisiert.</span>
+            </label>
             <label class="full">Niedrig priorisierte Quellen – eine Domain pro Zeile
               <textarea id="lowTrustSourcesInput" rows="6" placeholder="spieletest.at
 amazon.de"></textarea>
@@ -143,11 +152,17 @@ amazon.de"></textarea>
             </label>
             <label class="full">Recherche-Prompt
               <textarea id="researchPromptInput" rows="16"></textarea>
-              <span class="hint">Pflicht-Platzhalter: <code>{{QUERY}}</code>, <code>{{CURRENT_GAME}}</code>, <code>{{SOURCES}}</code>, <code>{{EVIDENCE}}</code>. Optional: <code>{{PRIMARY_DOMAINS}}</code>, <code>{{LOW_TRUST_DOMAINS}}</code>.</span>
+              <span class="hint">Pflicht-Platzhalter: <code>{{QUERY}}</code>, <code>{{CURRENT_GAME}}</code>, <code>{{SOURCES}}</code>, <code>{{EVIDENCE}}</code>. Optional: <code>{{PRIMARY_DOMAINS}}</code>, <code>{{REFERENCE_DOMAINS}}</code>, <code>{{LOW_TRUST_DOMAINS}}</code>, <code>{{ALLOWED_TAGS}}</code>.</span>
             </label>
             <div class="full button-row"><button class="button primary" type="submit">Recherche-Einstellungen speichern</button><button id="resetResearchSettingsButton" class="button" type="button">Auf Standard zurücksetzen</button></div>
             <p id="researchSettingsStatus" class="hint full" role="status"></p>
           </form>
+          <div class="tag-maintenance-box">
+            <strong>Tag-Pflege</strong>
+            <p class="hint">Entfernt alte Shop-/Navigations-Tags und normalisiert bekannte Synonyme auf die kontrollierte Tag-Liste.</p>
+            <button id="cleanupTagsButton" class="button" type="button">Bestehende Tags bereinigen</button>
+            <p id="cleanupTagsStatus" class="hint" role="status"></p>
+          </div>
         </div></details>
 
         <details><summary>Import / Export</summary><div class="details-body stack">
@@ -165,7 +180,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.2.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.4.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -176,7 +191,7 @@ amazon.de"></textarea>
     </nav>
   </div>
 
-  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><span class="spacer"></span><button id="detailApproveButton" type="button" class="button approve hidden">✓ Passt – geprüft</button><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><span class="spacer"></span><button id="detailApproveButton" type="button" class="button approve hidden">✓ Alle Vorschläge übernehmen</button><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 
   <dialog id="gameDialog" class="dialog">
     <form id="gameForm" method="dialog" class="dialog-card">
@@ -192,6 +207,7 @@ amazon.de"></textarea>
         <label>Spieldauer (Min.)<input id="playTimeInput" type="number" min="1" max="9999" inputmode="numeric"></label>
         <label>Mindestalter<input id="minAgeInput" type="number" min="0" max="99" inputmode="numeric"></label>
         <label>Verlag<input id="publisherInput" maxlength="180"></label>
+        <label>Lagerort<input id="storageLocationInput" maxlength="180" placeholder="z. B. 1. Tablar"></label>
         <label>Erscheinungsjahr<input id="yearInput" type="number" min="1800" max="2200" inputmode="numeric"></label>
         <label>Autor / Designer<input id="designerInput" maxlength="240"></label>
         <label>EAN / GTIN<input id="eanInput" maxlength="32" inputmode="numeric" autocapitalize="none"></label>
@@ -206,7 +222,11 @@ amazon.de"></textarea>
           <div id="existingAttachmentList" class="attachment-editor-list"></div>
           <p id="attachmentFormStatus" class="hint" role="status"></p>
         </div>
-        <label class="full">Tags<input id="tagsInput" placeholder="Familie, Karten, Koop"></label>
+        <div class="full tag-editor">
+          <div class="tag-editor-head"><strong>Tags</strong><span class="hint">Kontrollierte Tags für Suche und Filter.</span></div>
+          <input id="tagsInput" type="hidden">
+          <div id="tagPicker" class="tag-picker"></div>
+        </div>
         <label class="full">Anleitungs-Link<input id="rulesUrlInput" type="url" inputmode="url" placeholder="https://…/anleitung.pdf"></label>
         <label class="full">Anleitung / Kurzregeln<textarea id="rulesTextInput" rows="6" maxlength="12000"></textarea></label>
         <label class="full">Notizen<textarea id="notesInput" rows="3" maxlength="6000"></textarea></label>

@@ -1,8 +1,8 @@
 import {getAllGames,getGame,putGame,deleteGame,getAllAttachments,getAttachment,putAttachment,deleteAttachment,importGamesAndAttachments,getSetting,setSetting,getSecret,setSecret,clearSecrets} from "./db.js";
 
 export const BACKUP_FORMAT="brettspielregal-backup";
-export const BACKUP_VERSION=3;
-export const SUPPORTED_BACKUP_VERSIONS=new Set([1,2,3]);
+export const BACKUP_VERSION=4;
+export const SUPPORTED_BACKUP_VERSIONS=new Set([1,2,3,4]);
 
 function nowIso(){return new Date().toISOString();}
 function id(){return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;}
@@ -13,7 +13,7 @@ function cleanGame(raw={}){
     id: String(raw.id||id()), title:String(raw.title||"").trim(), description:String(raw.description||"").trim(),
     source_url:String(raw.source_url||"").trim(), rules_url:String(raw.rules_url||"").trim(), rules_text:String(raw.rules_text||"").trim(),
     min_players:num(raw.min_players), max_players:num(raw.max_players), play_time_min:num(raw.play_time_min), min_age:num(raw.min_age),
-    publisher:String(raw.publisher||"").trim(), year:num(raw.year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), cover_url:String(raw.cover_url||"").trim(), cover_attachment_id:String(raw.cover_attachment_id||"").trim(), award:String(raw.award||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
+    publisher:String(raw.publisher||"").trim(), year:num(raw.year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), cover_url:String(raw.cover_url||"").trim(), cover_attachment_id:String(raw.cover_attachment_id||"").trim(), award:String(raw.award||"").trim(), storage_location:String(raw.storage_location||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
     created_at:raw.created_at||nowIso(), updated_at:raw.updated_at||nowIso()
   };
 }
@@ -60,7 +60,7 @@ async function blobToBase64(blob){
   return btoa(str);
 }
 async function decodeAttachments(backup){
-  if(backup.version!==3)return [];
+  if(![3,4].includes(backup.version))return [];
   const rows=backup.data.attachments??[];
   if(!Array.isArray(rows)||rows.length>1000)throw new Error("Ungültige Anhänge im Backup.");
   const games=new Set(backup.data.games.map(g=>g.id));
@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.2.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.4.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -165,6 +165,7 @@ export class ServerProvider{
   researchSettings(){return this.request("/api/research-settings",{timeoutMs:20000});}
   saveResearchSettings(data){return this.request("/api/research-settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),timeoutMs:30000});}
   resetResearchSettings(){return this.request("/api/research-settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"reset"}),timeoutMs:20000});}
+  cleanupTags(){return this.request("/api/tags/cleanup",{method:"POST",timeoutMs:60000});}
   aiFromUrl(url){return this.request("/api/ai/from-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url}),timeoutMs:620000});}
   aiFromText(text,sourceUrl=""){return this.request("/api/ai/from-text",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,source_url:sourceUrl}),timeoutMs:620000});}
   aiFromImages(files,sourceUrl=""){
@@ -175,9 +176,11 @@ export class ServerProvider{
   }
   searchRules(game){return this.request("/api/ai/rules-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:90000});}
   importQueue(){return this.request("/api/import-queue",{timeoutMs:20000});}
-  quickCapture(text){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text}),timeoutMs:60000});}
+  quickCapture(text,storageLocation=""){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,storage_location:storageLocation}),timeoutMs:60000});}
   enqueueEnrichment(gameId,query="",replaceActive=false){return this.request(`/api/import-queue/games/${encodeURIComponent(gameId)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query,replace_active:replaceActive}),timeoutMs:20000});}
   approveImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/approve`,{method:"POST",timeoutMs:20000});}
+  applyImportSuggestions(jobId,fields=null){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/apply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields===null?{}:{fields}),timeoutMs:30000});}
+  rejectImportSuggestions(jobId,fields=null){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/reject`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields===null?{}:{fields}),timeoutMs:30000});}
   retryImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/retry`,{method:"POST",timeoutMs:20000});}
   cancelImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}`,{method:"DELETE",timeoutMs:20000});}
 }

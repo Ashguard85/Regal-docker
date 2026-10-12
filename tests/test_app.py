@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "8.2.0"
+        assert cfg["version"] == "8.4.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -50,7 +50,7 @@ def test_backup_import_and_cors():
         c.post("/api/games", json={"title": "Azul"})
         backup = c.get("/api/export").json
         assert backup["format"] == "brettspielregal-backup"
-        assert backup["version"] == 3
+        assert backup["version"] == 4
         preview = c.post("/api/import/preview", json={"backup": backup})
         assert preview.status_code == 200
         preflight = c.options("/api/games", headers={"Origin":"https://app.example.com","Access-Control-Request-Method":"GET"})
@@ -75,7 +75,7 @@ def test_quick_capture_creates_persistent_queue_jobs():
         os.environ["AI_IMPORT_ENABLED"] = "true"
         os.environ["AUTO_ENRICH_ENABLED"] = "true"
         c = app.test_client()
-        result = c.post("/api/import-queue/quick", json={"text": "Sky Team\n4002051698973"})
+        result = c.post("/api/import-queue/quick", json={"text": "Sky Team\n4002051698973", "storage_location":"1. Tablar"})
         assert result.status_code == 201
         assert result.json["count"] == 2
         queue = c.get("/api/import-queue").json
@@ -84,6 +84,7 @@ def test_quick_capture_creates_persistent_queue_jobs():
         games = c.get("/api/games").json
         assert len(games) == 2
         assert any(g["ean"] == "4002051698973" for g in games)
+        assert all(g["storage_location"] == "1. Tablar" for g in games)
 
 
 def test_review_job_can_be_approved_via_api():
@@ -93,7 +94,11 @@ def test_review_job_can_be_approved_via_api():
         c = app.test_client()
         created = c.post('/api/games', json={'title':'Brändi Dog'}).json
         job = db.enqueue_import_job(created['id'], 'Brändi Dog')
-        db.update_import_job(job['id'], status='review', progress='Bitte prüfen', warnings=['Cover unsicher'], finished=True)
-        approved = c.post(f"/api/import-queue/{job['id']}/approve")
+        proposed=db.normalize_game({**created,'publisher':'Brändi'},created)
+        db.replace_import_suggestions(job['id'],created['id'],proposed,created)
+        db.update_import_job(job['id'], status='review', progress='1 Vorschlag bereit', warnings=['Bitte prüfen'], finished=True)
+        approved = c.post(f"/api/import-queue/{job['id']}/suggestions/apply", json={"fields":["publisher"]})
         assert approved.status_code == 200
-        assert approved.json['status'] == 'verified'
+        assert approved.json['applied'] == ['publisher']
+        assert c.get(f"/api/games/{created['id']}").json['publisher'] == 'Brändi'
+        assert db.get_import_job(job['id'])['status'] == 'verified'
