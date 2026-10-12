@@ -47,7 +47,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.0.0",
+            version="8.1.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -141,6 +141,14 @@ def create_app(test_config=None):
     def retry_import_job(job_id):
         if request.method == "OPTIONS": return ("", 204)
         try: job = db.retry_import_job(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(job)
+
+    @app.route("/api/import-queue/<job_id>/approve", methods=["POST", "OPTIONS"])
+    def approve_import_job(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: job = db.approve_import_job(job_id)
         except ValueError as exc: return jsonify(error=str(exc)), 409
         if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
         return jsonify(job)

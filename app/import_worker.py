@@ -10,6 +10,7 @@ from .research_search import ResearchSearchError, research_game
 
 RUNNING = True
 CURRENT_MESSAGE = "Worker gestartet"
+LAST_LOG_MESSAGE = None
 
 
 def _stop(*_args):
@@ -18,9 +19,12 @@ def _stop(*_args):
 
 
 def _set_message(message):
-    global CURRENT_MESSAGE
+    global CURRENT_MESSAGE, LAST_LOG_MESSAGE
     CURRENT_MESSAGE = str(message)[:1000]
     db.set_runtime_state("import_worker", CURRENT_MESSAGE)
+    if CURRENT_MESSAGE != LAST_LOG_MESSAGE:
+        print(f"[worker] {CURRENT_MESSAGE}", flush=True)
+        LAST_LOG_MESSAGE = CURRENT_MESSAGE
 
 
 def _heartbeat_loop():
@@ -53,8 +57,10 @@ def process_job(job):
         db.update_import_job(job_id, status="failed", progress="Spiel nicht mehr vorhanden", error="Spiel wurde gelöscht.", finished=True)
         return
 
+    _set_message(f"Suche Quellen: {job['query'][:120]}")
     db.update_import_job(job_id, progress="Suche passende Quellen im Internet …")
     research = research_game(job["query"])
+    _set_message(f"{len(research['sources'])} Quellen gefunden; Ollama: {job['query'][:90]}")
     db.update_import_job(job_id, progress=f"{len(research['sources'])} Quellen gefunden; Ollama wertet die Daten aus …", sources=research["sources"])
     result = import_from_research(job["query"], game, research["evidence"], research["sources"])
     proposal = result["game"]
@@ -68,6 +74,7 @@ def process_job(job):
     status = "review" if warnings or useful < 3 else "done"
     progress = "Automatisch ergänzt – bitte kurz prüfen" if status == "review" else "Automatisch ergänzt"
     db.update_import_job(job_id, status=status, progress=progress, error="", warnings=warnings, sources=research["sources"], finished=True)
+    _set_message(f"Fertig ({status}): {normalized.get('title') or job['query']}")
 
 
 def run():

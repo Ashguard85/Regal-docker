@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "8.0.0"
+        assert cfg["version"] == "8.1.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -84,3 +84,16 @@ def test_quick_capture_creates_persistent_queue_jobs():
         games = c.get("/api/games").json
         assert len(games) == 2
         assert any(g["ean"] == "4002051698973" for g in games)
+
+
+def test_review_job_can_be_approved_via_api():
+    with tempfile.TemporaryDirectory() as tmp:
+        app = load_app(tmp)
+        import app.db as db
+        c = app.test_client()
+        created = c.post('/api/games', json={'title':'Brändi Dog'}).json
+        job = db.enqueue_import_job(created['id'], 'Brändi Dog')
+        db.update_import_job(job['id'], status='review', progress='Bitte prüfen', warnings=['Cover unsicher'], finished=True)
+        approved = c.post(f"/api/import-queue/{job['id']}/approve")
+        assert approved.status_code == 200
+        assert approved.json['status'] == 'verified'

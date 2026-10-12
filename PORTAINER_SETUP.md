@@ -1,18 +1,10 @@
-# Portainer Stack – Brettspielregal v8
+# Portainer Stack – Brettspielregal v8.1.0
 
-Diese Datei ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
+Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
-## Was v8 zusätzlich startet
+## Vorher
 
-- `app`: die vorhandene Brettspielregal-Web-App.
-- `worker`: verarbeitet die automatische Import-Warteschlange **nacheinander** im Hintergrund.
-- `searxng`: interne Meta-Websuche für Titel/EAN. Der Dienst bekommt **keinen veröffentlichten Port** und ist nur im Docker-Netz erreichbar.
-
-`app` und `worker` verwenden dasselbe `/app/data`. Die Warteschlange liegt persistent in derselben SQLite-Datenbank.
-
-## Vorher: Ollama-Modelle laden
-
-Auf dem Ollama-Host:
+Auf dem Ollama-Host müssen die Modelle vorhanden sein:
 
 ```bash
 ollama pull qwen3:14b
@@ -20,9 +12,18 @@ ollama pull gemma3:12b
 ollama list
 ```
 
-## Portainer → Stacks → Web editor
+In Portainer unter **Stack → Environment variables** müssen gesetzt sein:
 
-Die bisherige Stack-Datei durch diese Version ersetzen:
+```text
+SECRET_KEY      = dein bisheriger Brettspielregal-Schlüssel
+SEARXNG_SECRET  = ein langer zufälliger Schlüssel
+```
+
+Den vorhandenen `SECRET_KEY` nicht ändern.
+
+## Web Editor
+
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.1.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -58,6 +59,7 @@ x-app-environment: &app-environment
 services:
   app:
     image: brettspielregal:local
+    pull_policy: build
     build: *app-build
     ports:
       - "8190:8080"
@@ -73,18 +75,30 @@ services:
       homepage.href: "http://192.168.1.127:8190"
       homepage.description: "Meine Brettspielsammlung"
       homepage.showStats: "true"
+    depends_on:
+      - searxng
     restart: unless-stopped
 
   worker:
     image: brettspielregal:local
+    pull_policy: build
     build: *app-build
-    command: ["python", "-m", "app.import_worker"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "[worker] Brettspielregal Hintergrund-Worker gestartet"
+        exec python -m app.import_worker
+    healthcheck:
+      disable: true
     volumes:
       - /home/buebi/docker/brettspielregal/data:/app/data
       - /home/buebi/docker/brettspielregal/backups:/app/data/backups
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      PYTHONUNBUFFERED: "1"
     depends_on:
       - searxng
     restart: unless-stopped
@@ -93,145 +107,51 @@ services:
     image: docker.io/searxng/searxng:latest
     environment:
       SEARXNG_SECRET: "${SEARXNG_SECRET}"
-      FORCE_OWNERSHIP: "false"
     configs:
       - source: searxng_settings
         target: /etc/searxng/settings.yml
+    volumes:
+      - searxng_cache:/var/cache/searxng
     restart: unless-stopped
 
 configs:
   searxng_settings:
     content: |
       use_default_settings: true
+
       general:
+        debug: false
         instance_name: "Brettspielregal Search"
+
       search:
-        safe_search: 1
+        safe_search: 0
+        default_lang: "de"
         formats:
           - html
           - json
+
       server:
+        secret_key: "${SEARXNG_SECRET}"
         limiter: false
-        image_proxy: false
-```
+        image_proxy: true
 
-## Portainer-Umgebungsvariablen
-
-Unter dem Stack mindestens setzen:
-
-- `SECRET_KEY`: bisherigen Wert **beibehalten**.
-- `SEARXNG_SECRET`: neuer langer Zufallswert, z. B. 40–64 zufällige Zeichen.
-
-`SEARXNG_SECRET` ist nicht der Ollama-Schlüssel; SearXNG verwendet ihn intern für seine Web-App.
-
-## Schnellerfassung verwenden
-
-1. Brettspielregal öffnen.
-2. Auf **Schnell** tippen.
-3. Pro Zeile einen Spieltitel oder eine EAN eintragen, z. B.:
-
-```text
-Sky Team
-4002051698973
-Cascadia
-Dorfromantik
-```
-
-4. **Zur Warteschlange** drücken.
-5. Du kannst sofort weitere Spiele erfassen oder die PWA schließen.
-6. Der Worker recherchiert jeweils **ein Spiel nach dem anderen**, lässt Qwen die Daten strukturieren und speichert sie direkt beim Spiel.
-
-Status in der Sammlung:
-
-- `Wartet` – noch nicht begonnen.
-- `Wird ergänzt` – Websuche/Ollama läuft.
-- `Automatisch ergänzt` – erfolgreich gespeichert.
-- `Bitte prüfen` – gespeichert, aber Quellen waren unvollständig/widersprüchlich.
-- `Importfehler` – fehlgeschlagen; über `↻` erneut starten.
-
-## Welche Daten automatisch ergänzt werden
-
-Je nach Quellenlage:
-
-- Titel
-- Beschreibung
-- Spieler min./max.
-- Spieldauer
-- Mindestalter
-- Verlag
-- Erscheinungsjahr
-- Autor / Designer
-- EAN / GTIN
-- Cover-URL
-- Auszeichnung
-- Tags
-- offizieller Anleitungs-Link, wenn er in den gefundenen Quellen eindeutig vorkommt
-
-Vorhandene Anhänge, Notizen und manuell gepflegte Daten bleiben erhalten.
-
-## Verhalten bei Galaxus 403
-
-Der Worker sucht anhand Titel/EAN über SearXNG. Ein Suchtreffer kann auch dann als Hinweis verwendet werden, wenn Galaxus selbst den direkten Abruf mit HTTP 403 blockiert. Der Worker versucht **nicht**, diesen Schutz zu umgehen; er wertet weitere gefundene Quellen aus.
-
-## AUTO_ENRICH_NEW_GAMES
-
-Für deinen gewünschten Workflow ist standardmäßig aktiviert:
-
-```yaml
-AUTO_ENRICH_NEW_GAMES: "true"
-```
-
-Damit wird **jedes neu angelegte Spiel** automatisch in die Queue gestellt. Bestehende Spiele werden beim normalen Bearbeiten nicht erneut eingereiht.
-
-Wenn du später nur noch die explizite **Schnellerfassung** verwenden möchtest, kannst du auf `false` umstellen.
-
-## SQLite und Worker
-
-Es darf normalerweise nur **ein Worker** laufen. Der Worker verarbeitet absichtlich seriell, damit Qwen den verfügbaren RAM/VRAM möglichst vollständig nutzen kann und externe Quellen nicht parallel belastet werden.
-
-Die Queue ist persistent. Bleibt ein Job nach einem harten Worker-Abbruch länger als 30 Minuten auf `running`, wird er beim nächsten Worker-Lauf automatisch erneut eingereiht.
-
-## Falls Portainer `configs: ... content:` nicht akzeptiert
-
-Inline-Config-Inhalte benötigen eine ausreichend aktuelle Docker-Compose-Implementierung. Falls Portainer beim Deployen meldet, dass `content` unbekannt sei:
-
-1. Auf dem Docker-Host `/home/buebi/docker/brettspielregal/searxng/settings.yml` anlegen.
-2. Inhalt:
-
-```yaml
-use_default_settings: true
-general:
-  instance_name: "Brettspielregal Search"
-search:
-  safe_search: 1
-  formats:
-    - html
-    - json
-server:
-  limiter: false
-  image_proxy: false
-```
-
-3. Beim `searxng`-Service `configs:` entfernen und stattdessen mounten:
-
-```yaml
 volumes:
-  - /home/buebi/docker/brettspielregal/searxng/settings.yml:/etc/searxng/settings.yml:ro
+  searxng_cache:
 ```
 
-## Kontrolle nach dem Deployment
+Danach **Update the stack**.
 
-In Portainer sollten drei Container/Services laufen: `app`, `worker`, `searxng`.
+## Erwartete Container
 
-In Brettspielregal erscheint in der Sammlung:
+- `app` – Web-App/API
+- `worker` – Hintergrund-Import
+- `searxng` – interne Websuche ohne veröffentlichten Port
 
-- Button **Schnell**
-- Bereich **Automatische Ergänzung**
-- Badge **Worker online**
+Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
-Unter **Setup → KI / Link-Auswertung** stehen zusätzlich:
+## v8.1 Bedienung
 
-- `Hintergrund-Ergänzung: aktiv`
-- `Automatische Websuche: searxng`
-
-Wenn `Worker offline` erscheint, zuerst die Portainer-Logs des `worker`-Services prüfen.
+- **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht.
+- **Import**: Schnellerfassung, Workerstatus, Queue und Prüfaufträge.
+- **Setup**: Verbindung, Ollama, Backup und Betriebsmodus.
+- Ein Eintrag mit **Bitte prüfen** wird im Import-Tab über **Prüfen** geöffnet und kann anschließend mit **✓ Passt – geprüft** bestätigt werden.

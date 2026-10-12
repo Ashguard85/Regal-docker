@@ -46,3 +46,29 @@ def test_find_game_for_quick_capture():
         db.save_game(game)
         assert db.find_game_by_ean("4000 0000 0000 1")["id"] == "g1"
         assert db.find_game_by_title("dorfromantik")["id"] == "g1"
+
+
+def test_review_job_can_be_approved():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        game = db.normalize_game({"id": "g1", "title": "Brändi Dog"})
+        db.save_game(game)
+        job = db.enqueue_import_job("g1", "Brändi Dog")
+        db.update_import_job(job["id"], status="review", progress="Bitte prüfen", warnings=["Cover unsicher"], finished=True)
+        approved = db.approve_import_job(job["id"])
+        assert approved["status"] == "verified"
+        assert approved["progress"] == "Geprüft und bestätigt"
+        assert approved["warnings"] == ["Cover unsicher"]
+
+
+def test_only_review_job_can_be_approved():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        game = db.normalize_game({"id": "g1", "title": "Sky Team"})
+        db.save_game(game)
+        job = db.enqueue_import_job("g1", "Sky Team")
+        try:
+            db.approve_import_job(job["id"])
+            assert False, "queued job must not be approved"
+        except ValueError:
+            pass

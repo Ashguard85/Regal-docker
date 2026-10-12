@@ -1,6 +1,25 @@
-# Brettspielregal – Docker Fullstack v8.0.0
+# Brettspielregal – Docker Fullstack v8.1.0
 
-Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama und **persistenter Hintergrund-Recherche**. Docker v8 und GitHub Pages v8 gehören zusammen.
+Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama und **persistenter Hintergrund-Recherche**. Docker v8.1 und GitHub Pages v8.1 gehören zusammen.
+
+
+## Neu in v8.1
+
+### Eigener Import-Tab
+
+Die Sammlung ist wieder vollständig auf Spiele fokussiert. Schnellerfassung, Worker-Status, Warteschlange und Prüfaufträge liegen jetzt im eigenen Tab **Import**. Queue-Badges werden nicht mehr auf den Spielkarten eingeblendet.
+
+### „Bitte prüfen“ wirklich abschließen
+
+Ein Prüfauftrag hat jetzt einen echten Workflow:
+
+1. Im Tab **Import** auf **Prüfen** tippen.
+2. Das Spiel öffnet sich inklusive Worker-Hinweisen.
+3. Daten kontrollieren oder **Bearbeiten**.
+4. Mit **✓ Passt – geprüft** bestätigen.
+5. Der Auftrag erhält den Status `verified` und verschwindet aus der offenen Prüfliste.
+
+Zusätzlich kann ein Spiel über **Neu recherchieren** wieder in die Queue gestellt werden.
 
 ## Neu in v8
 
@@ -63,7 +82,7 @@ AUTO_FETCH_PAGES: "4"
 AUTO_RESEARCH_MAX_CHARS: "30000"
 ```
 
-Siehe `PORTAINER_SETUP.md` für den vollständigen Stack.
+Siehe `PORTAINER_SETUP.md` sowie `portainer-stack-v8.1.yml` für den vollständigen Stack.
 
 ## Neue API-Routen
 
@@ -71,6 +90,7 @@ Siehe `PORTAINER_SETUP.md` für den vollständigen Stack.
 - `POST /api/import-queue/quick`
 - `POST /api/import-queue/games/<game_id>`
 - `POST /api/import-queue/<job_id>/retry`
+- `POST /api/import-queue/<job_id>/approve`
 - `DELETE /api/import-queue/<job_id>`
 
 ## Datenbankmigration

@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.0.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.1.0",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -91,8 +91,11 @@ async function refreshConfig(){
   $("aiSearchLabel").textContent=currentMode==="server"&&aiEnabled?`Externe Anleitungs-Websuche: ${rulesSearchProvider==="openai"?"OpenAI":"aus"}`:"";
   $("autoEnrichLabel").textContent=currentMode==="server"?`Hintergrund-Ergänzung: ${autoEnrichEnabled?"aktiv":"aus"}`:"";
   $("autoSearchLabel").textContent=currentMode==="server"&&autoEnrichEnabled?`Automatische Websuche: ${autoSearchProvider}`:"";
-  $("quickCaptureButton").classList.toggle("hidden",currentMode!=="server"||!autoEnrichEnabled);
-  $("queuePanel").classList.toggle("hidden",currentMode!=="server"||!autoEnrichEnabled);
+  const importReady=currentMode==="server"&&autoEnrichEnabled;
+  $("queuePanel").classList.toggle("hidden",!importReady);
+  $("importUnavailable").classList.toggle("hidden",importReady);
+  $("quickCaptureInput").disabled=!importReady;
+  $("submitQuickCaptureButton").disabled=!importReady;
   $("testAiButton").disabled=currentMode!=="server"||!aiEnabled;
   $("aiImageButton").disabled=currentMode!=="server"||!aiEnabled||aiProvider!=="ollama";
 }
@@ -101,22 +104,29 @@ function latestJobForGame(gameId){
 }
 function jobStatusMeta(job){
   if(!job)return null;
-  const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Bitte prüfen","review"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
+  const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Bitte prüfen","review"],verified:["Geprüft","verified"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
   const [label,kind]=map[job.status]||[job.status||"Status",""];
   return {label,kind};
 }
 function renderQueue(){
-  const panel=$("queuePanel");
-  if(currentMode!=="server"||!autoEnrichEnabled){panel.classList.add("hidden");return;}
-  panel.classList.remove("hidden");
+  const panel=$("queuePanel"), unavailable=$("importUnavailable");
+  const ready=currentMode==="server"&&autoEnrichEnabled;
+  panel.classList.toggle("hidden",!ready);unavailable.classList.toggle("hidden",ready);
+  $("quickCaptureInput").disabled=!ready;$("submitQuickCaptureButton").disabled=!ready;
+  if(!ready){$("workerBadge").textContent="Nicht aktiv";$("workerBadge").classList.add("offline");return;}
   const active=importJobs.filter(j=>["queued","running"].includes(j.status));
   const attention=importJobs.filter(j=>["review","failed"].includes(j.status));
-  $("queueSummary").textContent=active.length?`${active.length} Auftrag${active.length===1?"":"e"} aktiv · ${attention.length} mit Hinweis`:(attention.length?`${attention.length} Auftrag${attention.length===1?"":"e"} bitte prüfen`:"Keine wartenden Aufträge.");
+  $("queueSummary").textContent=active.length?`${active.length} Auftrag${active.length===1?"":"e"} aktiv · ${attention.length} mit Hinweis`:(attention.length?`${attention.length} Auftrag${attention.length===1?"":"e"} benötigt deine Aufmerksamkeit`:"Alles erledigt – keine offenen Aufträge.");
   $("workerBadge").textContent=workerState.status==="online"?"Worker online":"Worker offline";
   $("workerBadge").classList.toggle("offline",workerState.status!=="online");
-  const shown=importJobs.filter(j=>["running","queued","review","failed"].includes(j.status)).slice(0,8);
-  $("queueList").innerHTML=shown.map(job=>{const m=jobStatusMeta(job);return `<div class="queue-row"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${job.status==="failed"?`<button class="queue-retry" type="button" data-retry-job="${esc(job.id)}">↻</button>`:""}</div>`;}).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
+  const shown=importJobs.filter(j=>["running","queued","review","failed"].includes(j.status)).slice(0,30);
+  $("queueList").innerHTML=shown.map(job=>{
+    const m=jobStatusMeta(job),review=job.status==="review",failed=job.status==="failed";
+    const actions=review?`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">Prüfen</button></div>`:failed?`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`:"";
+    return `<div class="queue-row ${review?"review-row":""}"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${actions}</div>`;
+  }).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
   $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
+  $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
 }
 async function refreshQueue(forceGames=false){
   if(currentMode!=="server"||!autoEnrichEnabled){importJobs=[];renderQueue();return;}
@@ -194,12 +204,10 @@ function renderGames(){
     if(g.year)meta.push({text:String(g.year),kind:""});
     if(g.award)meta.push({text:g.award,kind:"award"});
     for(const tag of (g.tags||[]).slice(0,2))meta.push({text:tag,kind:""});
-    const job=latestJobForGame(g.id), jobMeta=jobStatusMeta(job);
-    if(jobMeta)meta.push({text:jobMeta.label,kind:`job-${jobMeta.kind}`});
     if(collectionView==="shelf"){
       card.className="game-card shelf-card";
       const subline=[g.publisher,g.year].filter(Boolean).join(" · ")||(g.designer?`von ${g.designer}`:"Meine Sammlung");
-      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}${jobMeta?`<span class="shelf-job-badge ${jobMeta.kind}">${esc(jobMeta.label)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
+      card.innerHTML=`<button class="shelf-hit" type="button"><div class="shelf-cover-wrap">${coverHtml(g,"game-cover shelf-cover")}${g.award?`<span class="shelf-award">★ ${esc(g.award)}</span>`:""}</div><div class="shelf-copy"><h3>${esc(g.title)}</h3><p class="shelf-subline">${esc(subline)}</p><div class="shelf-mini-meta">${meta.filter(x=>x.kind==="core").slice(0,3).map(x=>`<span class="shelf-mini-chip">${esc(x.text)}</span>`).join("")}</div></div></button>`;
     }else{
       card.className="game-card";
       card.innerHTML=`<button class="card-hit with-cover" type="button">${coverHtml(g)}<div class="card-copy"><div class="game-title-row"><h3>${esc(g.title)}</h3><span aria-hidden="true">›</span></div>${g.description?`<p class="game-description">${esc(g.description)}</p>`:""}<div class="game-meta">${meta.map(x=>`<span class="chip ${x.kind}">${esc(x.text)}</span>`).join("")}</div></div></button>`;
@@ -271,9 +279,16 @@ function openGameDetail(gameId){
   const imageGallery=images.length?`<div class="attachment-gallery">${images.map(a=>`<div class="attachment-tile ${selected?.id===a.id?"cover-selected":""}">${coverHtml(game,"tile-image",a)}<strong>${esc(a.filename)}</strong><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Ansehen</button><button class="button" type="button" data-cover-attachment="${esc(a.id)}" ${selected?.id===a.id?"disabled":""}>${selected?.id===a.id?"Cover ✓":"Als Cover"}</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
   const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button><button class="button" type="button" data-download-attachment="${esc(a.id)}">Laden</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
   const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
+  const reviewJob=latestJobForGame(game.id),needsReview=reviewJob?.status==="review";
+  const warningPanel=needsReview?`<section class="detail-panel review-panel"><h4>Automatische Ergänzung prüfen</h4><p class="hint">Der Worker hat die Daten gespeichert, konnte aber nicht alles eindeutig bestätigen. Prüfe besonders diese Hinweise:</p>${reviewJob.warnings?.length?`<ul class="review-warning-list">${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:`<p class="detail-notes">Bitte die automatisch ergänzten Angaben kurz gegen Cover, Hersteller oder Anleitung prüfen.</p>`}</section>`:"";
   $("detailTitle").textContent=game.title||"Spiel";
-  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels"><section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section><section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
+  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section><section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
   $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
+  $("detailApproveButton").classList.toggle("hidden",!needsReview);
+  $("detailApproveButton").onclick=needsReview?async()=>{const b=$("detailApproveButton");setBusy(b,true,"Bestätige …");try{await provider.approveImportJob(reviewJob.id);await refreshQueue();$("gameDetailDialog").close();showView("import");showMessage("Als geprüft markiert",`${game.title} ist bestätigt und wurde aus der Prüfliste entfernt.`);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
+  const canReEnrich=currentMode==="server"&&autoEnrichEnabled&&!(["queued","running"].includes(reviewJob?.status));
+  $("detailReEnrichButton").classList.toggle("hidden",!canReEnrich);
+  $("detailReEnrichButton").onclick=canReEnrich?async()=>{const b=$("detailReEnrichButton");setBusy(b,true,"Reihe ein …");try{await provider.enqueueEnrichment(game.id,game.ean||game.title,false);await refreshQueue();$("gameDetailDialog").close();showView("import");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
   const find=id=>(game.attachments||[]).find(a=>a.id===id);
   $("detailBody").querySelectorAll("[data-open-attachment]").forEach(b=>b.addEventListener("click",()=>openStoredAttachment(game,find(b.dataset.openAttachment))));
   $("detailBody").querySelectorAll("[data-download-attachment]").forEach(b=>b.addEventListener("click",()=>downloadStoredAttachment(game,find(b.dataset.downloadAttachment))));
@@ -390,14 +405,11 @@ async function processMagicImport(payload){
   if(apply){openGame();applyProposal(data);}
 }
 
-function openQuickCapture(){
-  if(currentMode!=="server"||!autoEnrichEnabled){showMessage("Nur im Server-Modus","Die Schnellerfassung mit Hintergrund-Worker ist nur im Server-Modus verfügbar.");return;}
-  $("quickCaptureInput").value="";$("quickCaptureDialog").showModal();setTimeout(()=>$("quickCaptureInput").focus(),40);
-}
 async function submitQuickCapture(event){
   event.preventDefault();const text=$("quickCaptureInput").value.trim();if(!text)return;
+  if(currentMode!=="server"||!autoEnrichEnabled){showMessage("Hintergrund-Import nicht aktiv","Bitte Server-Modus und automatische Ergänzung aktivieren.");return;}
   const b=$("submitQuickCaptureButton");setBusy(b,true,"Reihe ein …");
-  try{const result=await provider.quickCapture(text);$("quickCaptureDialog").close();await loadGames();await refreshQueue();showMessage("Zur Warteschlange hinzugefügt",`${result.count||0} Spiel${result.count===1?"":"e"} wurden erfasst. Du kannst die App schließen; der Docker-Worker arbeitet weiter.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+  try{const result=await provider.quickCapture(text);$("quickCaptureInput").value="";await loadGames();await refreshQueue();showMessage("Zur Warteschlange hinzugefügt",`${result.count||0} Spiel${result.count===1?"":"e"} wurden erfasst. Der Worker arbeitet im Hintergrund weiter.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
 }
 
 async function aiImageImport(files){
@@ -507,7 +519,7 @@ async function switchMode(mode){
 function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
 
 function bindEvents(){
-  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureButton").addEventListener("click",openQuickCapture);$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("closeQuickCaptureButton").addEventListener("click",()=>$("quickCaptureDialog").close());$("cancelQuickCaptureButton").addEventListener("click",()=>$("quickCaptureDialog").close());$("searchInput").addEventListener("input",renderGames);
+  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("searchInput").addEventListener("input",renderGames);
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
   $("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
   $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));

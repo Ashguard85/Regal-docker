@@ -1,19 +1,18 @@
-# Testbericht – Brettspielregal v8.0.0
+# Testbericht – Brettspielregal v8.1.0
 
 ## Automatisch geprüft
 
-- Python-Syntax aller Backend-Module (`py_compile`)
-- JavaScript-Syntax (`node --check`) für `app.js`, `providers.js`, `db.js`, `config.js`, `service-worker.js`
-- HTML/JS-DOM-Abgleich: 107 referenzierte/definierte IDs, keine fehlenden oder doppelten IDs
-- CSS mit `tinycss2`: 246 Regeln, 0 Parserfehler
-- `manifest.webmanifest`: gültiges JSON
-- Docker-/Pages-/Docker-static Frontend-Parität für alle gemeinsamen Dateien
-- Docker-Compose-Beispiel: YAML erfolgreich geparst; Services `app`, `worker`, `searxng`
-- Service Worker: `brettspielregal-pwa-v8`
+- Python-Syntax aller geänderten Backend-Module (`py_compile`)
+- JavaScript-Syntax (`node --check`) für `app.js`, `providers.js`, `db.js` und `service-worker.js`
+- HTML/JS-DOM-Abgleich: 101 per JavaScript referenzierte IDs, keine fehlenden IDs
+- CSS mit `tinycss2`: 271 Regeln, 0 Parserfehler
+- Docker-Frontend wurde erneut nach `app/static` gebaut
+- Service Worker: `brettspielregal-pwa-v8-1`
+- Portainer-/Compose-Datei enthält `app`, `worker`, `searxng`, `pull_policy: build` und deaktivierten Worker-HTTP-Healthcheck
 
 ## Python-Tests ohne Flask-Abhängigkeit
 
-**24 bestanden.** Abgedeckt sind unter anderem:
+**26 bestanden.** Abgedeckt sind unter anderem:
 
 - bestehende AI-/Ollama-Extraktion
 - Text- und Vision-Modellkonfiguration
@@ -25,17 +24,13 @@
 - Vermeidung doppelter aktiver Jobs
 - Titel-/EAN-Wiederverwendung bei Schnellerfassung
 - SearXNG-JSON-Auswertung und HTTPS-Filter
-- hilfreicher Fehler bei deaktiviertem SearXNG-JSON-Format
 - Background-Worker aktualisiert Spiele und Jobstatus
-- Research→Ollama-Merge erhält vorhandene Nutzerdaten
+- neuer Review→Verified-Workflow
+- Ablehnung einer Bestätigung für nicht prüfbare Queue-Zustände
 
 ## Flask-Integrationstests
 
-Im Repository liegen **7 Flask-API-Tests**, inklusive v8-Schnellerfassungs-/Queue-Endpunkt.
-
-In der aktuellen Build-Umgebung konnten sie nicht gestartet werden, weil Flask nicht vorinstalliert ist. Ein Versuch, die Requirements in eine isolierte venv zu installieren, scheiterte an deaktivierter DNS/Internet-Auflösung der Ausführungsumgebung (`pip` konnte PyPI nicht erreichen). Das ist kein festgestellter Codefehler. Im Docker-Build wird Flask aus `requirements.txt` installiert.
-
-Gesamter lokaler Pytest-Lauf in dieser Umgebung: **24 passed, 7 nicht ausführbar wegen `ModuleNotFoundError: flask`**.
+Im Repository liegen 7 Flask-API-/Attachment-Tests. In der aktuellen Ausführungsumgebung konnten sie nicht gestartet werden, weil Flask dort nicht installiert ist (`ModuleNotFoundError: flask`). Das ist kein festgestellter Codefehler; im Docker-Build wird Flask regulär aus `requirements.txt` installiert.
 
 ## Nicht live getestet
 

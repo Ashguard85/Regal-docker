@@ -357,6 +357,18 @@ def retry_import_job(job_id):
         return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
 
 
+def approve_import_job(job_id):
+    now = utcnow()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        if row['status'] != 'review':
+            raise ValueError("Nur ein Auftrag mit Status ‚Bitte prüfen‘ kann bestätigt werden.")
+        conn.execute("UPDATE import_jobs SET status='verified', progress='Geprüft und bestätigt', error='', updated_at=?, finished_at=? WHERE id=?", (now, now, job_id))
+        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
 def cancel_import_job(job_id):
     now = utcnow()
     with connect() as conn:

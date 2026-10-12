@@ -35,7 +35,7 @@
             <p class="hero-kicker">Dein persönliches Spieleregal</p>
             <div class="section-head">
               <div><h2 id="collectionHeading">Brettspiele</h2><p id="collectionCount" class="muted">0 Spiele</p></div>
-              <div class="hero-actions"><button id="quickCaptureButton" class="button quick-button hidden" type="button"><span aria-hidden="true">⚡</span> Schnell</button><button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button></div>
+              <button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button>
             </div>
             <p class="hero-text">Schnell finden, was du besitzt – inklusive Regeln, Cover und wichtigen Spieldaten.</p>
           </div>
@@ -49,11 +49,6 @@
           <p class="collection-subhint">Eigene Bilder und Anleitungen direkt am Spiel speichern.</p>
         </div>
         <div id="statusBanner" class="status-banner hidden" role="status"></div>
-        <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
-          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Automatische Ergänzung</h3></div><span id="workerBadge" class="worker-badge">Worker …</span></div>
-          <p id="queueSummary" class="muted">Keine Aufträge.</p>
-          <div id="queueList" class="queue-list"></div>
-        </section>
         <div id="gameList" class="game-list"></div>
         <div id="emptyState" class="empty-state hidden">
           <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -61,6 +56,41 @@
           <p>Lege dein erstes Spiel an oder übernimm Daten bequem aus einem externen Link.</p>
           <button id="emptyAddButton" class="button primary">Erstes Spiel erfassen</button>
         </div>
+      </section>
+
+      <section id="viewImport" class="view" aria-labelledby="importHeading">
+        <div class="import-hero">
+          <div>
+            <p class="eyebrow">Schnellerfassung & Automatik</p>
+            <h2 id="importHeading">Spiele importieren</h2>
+            <p>Erfasse nur Titel oder EAN. Der Docker-Worker recherchiert die Spiele anschließend nacheinander und ergänzt die Daten im Hintergrund.</p>
+          </div>
+          <span id="workerBadge" class="worker-badge">Worker …</span>
+        </div>
+
+        <div id="importUnavailable" class="import-unavailable hidden">
+          <strong>Hintergrund-Import nicht verfügbar</strong>
+          <p>Diese Funktion benötigt den Server-Modus mit aktivierter automatischer Ergänzung.</p>
+        </div>
+
+        <form id="quickCaptureForm" class="import-card">
+          <div class="import-card-head">
+            <div><p class="eyebrow">Schnellerfassung</p><h3>Mehrere Spiele auf einmal</h3></div>
+            <span class="import-step">1</span>
+          </div>
+          <p class="muted">Ein Titel oder eine EAN pro Zeile. Nach dem Einreihen kannst du die App schließen; der Worker arbeitet weiter.</p>
+          <label class="quick-capture-label">Titel / EANs<textarea id="quickCaptureInput" rows="8" maxlength="12000" placeholder="Sky Team
+4002051698973
+Cascadia
+Dorfromantik"></textarea></label>
+          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Zur Warteschlange</button></div>
+        </form>
+
+        <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
+          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Warteschlange & Prüfung</h3></div><span class="import-step">2</span></div>
+          <p id="queueSummary" class="muted">Keine Aufträge.</p>
+          <div id="queueList" class="queue-list"></div>
+        </section>
       </section>
 
       <section id="viewSetup" class="view" aria-labelledby="setupHeading">
@@ -110,30 +140,18 @@
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.1.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Hauptnavigation">
       <button class="nav-button active" data-view="collection"><span>▦</span><small>Sammlung</small></button>
+      <button class="nav-button" data-view="import"><span>⇩</span><small>Import</small></button>
       <button class="nav-button" data-view="setup"><span>⚙</span><small>Setup</small></button>
     </nav>
   </div>
 
-  <dialog id="quickCaptureDialog" class="dialog">
-    <form id="quickCaptureForm" method="dialog" class="dialog-card compact">
-      <div class="dialog-head"><div><p class="eyebrow">Schnellerfassung</p><h2>Mehrere Spiele einreihen</h2></div><button id="closeQuickCaptureButton" type="button" class="icon-button" aria-label="Schließen">×</button></div>
-      <p class="muted">Ein Titel oder eine EAN pro Zeile. Die Spiele werden sofort angelegt; der Server ergänzt sie anschließend nacheinander im Hintergrund.</p>
-      <label class="quick-capture-label">Titel / EANs<textarea id="quickCaptureInput" rows="10" maxlength="12000" placeholder="Sky Team
-4002051698973
-Cascadia
-Dorfromantik"></textarea></label>
-      <div class="quick-example"><strong>Du kannst direkt weitermachen.</strong><span>Ollama und die Websuche laufen im Docker-Worker weiter, auch wenn du die PWA schließt.</span></div>
-      <div class="dialog-actions"><button id="cancelQuickCaptureButton" class="button" type="button">Abbrechen</button><span class="spacer"></span><button id="submitQuickCaptureButton" class="button primary" type="submit">Zur Warteschlange</button></div>
-    </form>
-  </dialog>
-
-  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><span class="spacer"></span><button id="detailApproveButton" type="button" class="button approve hidden">✓ Passt – geprüft</button><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 
   <dialog id="gameDialog" class="dialog">
     <form id="gameForm" method="dialog" class="dialog-card">
