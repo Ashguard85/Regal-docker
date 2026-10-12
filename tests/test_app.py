@@ -23,7 +23,7 @@ def test_health_config_and_crud():
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "8.4.0"
+        assert cfg["version"] == "8.5.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={

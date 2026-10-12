@@ -68,7 +68,7 @@ def process_job(job):
     normalized = db.normalize_game(proposal, game)
     normalized["id"] = game["id"]
 
-    # v8.4: KI-Daten werden niemals direkt in games geschrieben. Sie bleiben als
+    # v8.5: KI-Daten werden niemals direkt in games geschrieben. Sie bleiben als
     # temporäre Feldvorschläge, bis der Benutzer sie ausdrücklich übernimmt.
     suggestion_count = db.replace_import_suggestions(job_id, game["id"], normalized, game)
     warnings = result.get("warnings") or []

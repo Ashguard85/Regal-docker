@@ -1,6 +1,6 @@
 import re
 
-# v8.4: Kanonische Tags werden ausschließlich auf Deutsch gespeichert/angezeigt.
+# v8.5: Kanonische Tags werden ausschließlich auf Deutsch gespeichert/angezeigt.
 TAG_CATEGORIES = {
     "Spielart": [
         "Familienspiel", "Kinderspiel", "Kennerspiel", "Expertenspiel", "Partyspiel",

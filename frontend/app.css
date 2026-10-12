@@ -30,7 +30,7 @@
 }
 
 * { box-sizing: border-box; min-width: 0; }
-html { min-height: 100%; background: var(--bg); }
+html { min-height: 100%; background: var(--bg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100%;
@@ -303,6 +303,13 @@ details[open] summary { color: var(--brand); }
 .mode-choice.selected { border-color: #7ca18b; box-shadow: 0 0 0 3px rgba(36,88,68,.08); background: #eef5f0; }
 .mode-choice.selected::after { content: "✓"; position: absolute; right: 11px; top: 10px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--brand); color: white; font-size: .73rem; font-weight: 800; }
 
+.research-toggle { display:flex; align-items:flex-start; gap:11px; padding:12px 13px; border:1px solid var(--border); border-radius:15px; background:rgba(255,255,255,.86); color:var(--ink); cursor:pointer; }
+.research-toggle input { flex:0 0 auto; width:20px; height:20px; min-height:20px; margin:1px 0 0; accent-color:var(--brand-2); box-shadow:none; }
+.research-toggle span { display:block; }
+.research-toggle strong { display:block; font-size:.9rem; }
+.research-toggle small { display:block; margin-top:3px; color:var(--muted); font-size:.78rem; font-weight:500; line-height:1.35; }
+.research-toggle:has(input:disabled) { opacity:.62; cursor:not-allowed; }
+
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-grid label { display: block; color: #3e4943; font-size: .82rem; font-weight: 700; }
 .form-grid label input, .form-grid label textarea { margin-top: 5px; color: var(--ink); font-weight: 480; }
@@ -344,6 +351,8 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 
 @media (max-width:560px) {
   .content { padding-left: 10px; padding-right: 10px; }
+  input, textarea, select { font-size: 16px; }
+
   .topbar { padding-left: 12px; padding-right: 12px; }
   .brand-mark { width: 36px; height: 36px; }
   .collection-hero { padding: 16px 14px 15px; border-radius: 20px; }
@@ -576,7 +585,7 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
   .tag-editor-head .hint { text-align:left; }
 }
 
-/* v8.4: Lagerort + sichere KI-Vorschläge */
+/* v8.5: Lagerort + sichere KI-Vorschläge */
 .chip.location { border-color:#d9e3dc; background:#f0f5f1; color:#3e6251; }
 .quick-capture-label input { margin-top:5px; }
 .suggestion-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }

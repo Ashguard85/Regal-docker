@@ -49,7 +49,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.4.0",
+            version="8.5.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -111,11 +111,12 @@ def create_app(test_config=None):
         if request.method == "OPTIONS": return ("", 204)
         if request.method == "GET": return jsonify(db.list_games())
         payload = request.get_json(silent=True) or {}
+        auto_enrich_requested = payload.pop("_auto_enrich", True) is not False
         payload["id"] = str(uuid.uuid4())
         try: game = db.normalize_game(payload)
         except ValueError as exc: return jsonify(error=str(exc)), 400
         db.save_game(game)
-        if os.environ.get("AUTO_ENRICH_NEW_GAMES", "false").lower() in {"1","true","yes","on"}:
+        if auto_enrich_requested and os.environ.get("AUTO_ENRICH_NEW_GAMES", "false").lower() in {"1","true","yes","on"} and os.environ.get("AI_IMPORT_ENABLED", "false").lower() in {"1","true","yes","on"}:
             try:
                 db.enqueue_import_job(game["id"], game.get("ean") or game.get("title"))
             except ValueError:
@@ -130,9 +131,10 @@ def create_app(test_config=None):
     @app.route("/api/import-queue/quick", methods=["POST", "OPTIONS"])
     def quick_capture():
         if request.method == "OPTIONS": return ("", 204)
-        if os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() not in {"1","true","yes","on"} or os.environ.get("AI_IMPORT_ENABLED", "false").lower() not in {"1","true","yes","on"}:
-            return jsonify(error="Die automatische Hintergrund-Ergänzung oder KI ist deaktiviert."), 503
         payload = request.get_json(silent=True) or {}
+        enrich_requested = payload.get("enrich", True) is not False
+        if enrich_requested and (os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() not in {"1","true","yes","on"} or os.environ.get("AI_IMPORT_ENABLED", "false").lower() not in {"1","true","yes","on"}):
+            return jsonify(error='Die automatische Hintergrund-Ergänzung oder KI ist deaktiviert. Deaktiviere "Mit KI recherchieren", um nur zu erfassen.'), 503
         raw_text = str(payload.get("text") or "")
         raw_items = payload.get("items")
         if isinstance(raw_items, list):
@@ -166,8 +168,8 @@ def create_app(test_config=None):
                 db.save_game(game)
                 reused = False
             query = digits if is_ean else line
-            job = db.enqueue_import_job(game["id"], query)
-            created.append({"game": game, "job": job, "reused": reused})
+            job = db.enqueue_import_job(game["id"], query) if enrich_requested else None
+            created.append({"game": game, "job": job, "reused": reused, "enrichment_queued": bool(job)})
         return jsonify(items=created, count=len(created)), 201
 
     @app.route("/api/import-queue/games/<game_id>", methods=["POST", "OPTIONS"])
@@ -191,7 +193,7 @@ def create_app(test_config=None):
 
     @app.route("/api/import-queue/<job_id>/approve", methods=["POST", "OPTIONS"])
     def approve_import_job(job_id):
-        """Compatibility endpoint: v8.4 applies all pending AI suggestions explicitly."""
+        """Compatibility endpoint: v8.5 applies all pending AI suggestions explicitly."""
         if request.method == "OPTIONS": return ("", 204)
         try: result = db.apply_import_suggestions(job_id)
         except ValueError as exc: return jsonify(error=str(exc)), 409

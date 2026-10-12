@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.4.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.0",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -33,6 +33,16 @@ function selectedMode(){return isDocker()?"server":(localStorage.getItem("bretts
 function setModeValue(mode){if(!isDocker())localStorage.setItem("brettspielregal-mode",mode);currentMode=mode;releaseCovers("list");releaseCovers("detail");}
 function setCollectionView(view){collectionView=view==="shelf"?"shelf":"list";localStorage.setItem("brettspielregal-collection-view",collectionView);renderGames();}
 function updateViewButtons(){for(const [id,view] of [["viewListButton","list"],["viewShelfButton","shelf"]]){const b=$(id);b.classList.toggle("active",collectionView===view);b.setAttribute("aria-pressed",String(collectionView===view));}}
+function researchAvailable(){return currentMode==="server"&&autoEnrichEnabled&&aiEnabled;}
+function updateResearchControls(){
+  const available=researchAvailable();
+  const quick=$("quickCaptureUseAi");
+  if(quick){quick.disabled=!available;if(!available)quick.checked=false;}
+  const quickButton=$("submitQuickCaptureButton");
+  if(quickButton)quickButton.textContent=quick?.checked?"Erfassen & recherchieren":"Nur erfassen";
+  const newToggle=$("newGameAutoEnrich");
+  if(newToggle){newToggle.disabled=!available;if(!available)newToggle.checked=false;}
+}
 function setBusy(button,busy,label="Bitte warten …"){if(!button)return;if(busy){button.dataset.oldText=button.textContent;button.textContent=label;button.disabled=true;}else{button.textContent=button.dataset.oldText||button.textContent;button.disabled=false;}}
 function showBanner(message,type="info"){const el=$("statusBanner");if(!message){el.className="status-banner hidden";el.textContent="";return;}el.className=`status-banner${type==="error"?" error":""}`;el.textContent=message;}
 function showMessage(title,message){$("messageTitle").textContent=title;$("messageBody").innerHTML=`<p>${nl2br(message)}</p>`;$("messageDialog").showModal();}
@@ -140,11 +150,13 @@ async function refreshConfig(){
   $("aiSearchLabel").textContent=currentMode==="server"&&aiEnabled?`Externe Anleitungs-Websuche: ${rulesSearchProvider==="openai"?"OpenAI":"aus"}`:"";
   $("autoEnrichLabel").textContent=currentMode==="server"?`Hintergrund-Ergänzung: ${autoEnrichEnabled?"aktiv":"aus"}`:"";
   $("autoSearchLabel").textContent=currentMode==="server"&&autoEnrichEnabled?`Automatische Websuche: ${autoSearchProvider}`:"";
-  const importReady=currentMode==="server"&&autoEnrichEnabled;
+  const captureReady=currentMode==="server";
+  const importReady=researchAvailable();
   $("queuePanel").classList.toggle("hidden",!importReady);
   $("importUnavailable").classList.toggle("hidden",importReady);
-  $("quickCaptureInput").disabled=!importReady;
-  $("submitQuickCaptureButton").disabled=!importReady;
+  $("quickCaptureInput").disabled=!captureReady;
+  $("submitQuickCaptureButton").disabled=!captureReady;
+  updateResearchControls();
   $("testAiButton").disabled=currentMode!=="server"||!aiEnabled;
   $("aiImageButton").disabled=currentMode!=="server"||!aiEnabled||aiProvider!=="ollama";
 }
@@ -159,9 +171,11 @@ function jobStatusMeta(job){
 }
 function renderQueue(){
   const panel=$("queuePanel"), unavailable=$("importUnavailable");
-  const ready=currentMode==="server"&&autoEnrichEnabled;
+  const ready=researchAvailable();
+  const captureReady=currentMode==="server";
   panel.classList.toggle("hidden",!ready);unavailable.classList.toggle("hidden",ready);
-  $("quickCaptureInput").disabled=!ready;$("submitQuickCaptureButton").disabled=!ready;
+  $("quickCaptureInput").disabled=!captureReady;$("submitQuickCaptureButton").disabled=!captureReady;
+  updateResearchControls();
   if(!ready){$("workerBadge").textContent="Nicht aktiv";$("workerBadge").classList.add("offline");return;}
   const active=importJobs.filter(j=>["queued","running"].includes(j.status));
   const attention=importJobs.filter(j=>["review","failed"].includes(j.status));
@@ -179,7 +193,7 @@ function renderQueue(){
   $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
 }
 async function refreshQueue(forceGames=false){
-  if(currentMode!=="server"||!autoEnrichEnabled){importJobs=[];renderQueue();return;}
+  if(!researchAvailable()){importJobs=[];renderQueue();return;}
   try{
     const result=await provider.importQueue();
     importJobs=Array.isArray(result.jobs)?result.jobs:[];workerState=result.worker||{status:"offline",message:""};
@@ -191,7 +205,7 @@ async function refreshQueue(forceGames=false){
 }
 function startQueuePolling(){
   if(queueTimer){clearInterval(queueTimer);queueTimer=null;}
-  if(currentMode==="server"&&autoEnrichEnabled){refreshQueue();queueTimer=setInterval(()=>refreshQueue(),8000);}
+  if(researchAvailable()){refreshQueue();queueTimer=setInterval(()=>refreshQueue(),8000);}
 }
 async function loadGames(){
   showBanner("");
@@ -292,6 +306,10 @@ function openGame(game=null){
     renderCoverPreview();
   }
   renderTagPicker();renderEditAttachments(game);
+  const researchRow=$("newGameResearchRow"),researchToggle=$("newGameAutoEnrich");
+  const showResearch=!game&&currentMode==="server";
+  researchRow.classList.toggle("hidden",!showResearch);
+  if(showResearch){researchToggle.disabled=!researchAvailable();researchToggle.checked=researchAvailable();}
   $("gameDialog").showModal();setTimeout(()=>$("titleInput").focus(),50);
 }
 function sizeText(bytes){return bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(bytes/1024))} KB`;}
@@ -413,7 +431,7 @@ async function saveGame(event){
   event.preventDefault();const data=formGame();if(!data.title){showMessage("Titel fehlt","Bitte gib einen Titel ein.");return;}
   const submit=$("gameForm").querySelector('button[type="submit"]');setBusy(submit,true,"Speichere …");
   try{
-    const id=$("gameId").value;const saved=id?await provider.update(id,data):await provider.create(data);
+    const id=$("gameId").value;const saved=id?await provider.update(id,data):await provider.create(data,{autoEnrich:$("newGameAutoEnrich").checked});
     $("gameId").value=saved.id;
     for(let i=0;i<pendingFiles.length;){
       try{await provider.addAttachment(saved.id,pendingFiles[i]);pendingFiles.splice(i,1);}
@@ -473,9 +491,14 @@ async function processMagicImport(payload){
 
 async function submitQuickCapture(event){
   event.preventDefault();const text=$("quickCaptureInput").value.trim();if(!text)return;
-  if(currentMode!=="server"||!autoEnrichEnabled){showMessage("Hintergrund-Import nicht aktiv","Bitte Server-Modus und automatische Ergänzung aktivieren.");return;}
-  const b=$("submitQuickCaptureButton");setBusy(b,true,"Reihe ein …");
-  try{const result=await provider.quickCapture(text,$("quickCaptureLocation").value.trim());$("quickCaptureInput").value="";await loadGames();await refreshQueue();showMessage("Erfasst & Recherche gestartet",`${result.count||0} Spiel${result.count===1?"":"e"} sind sofort in der Sammlung. KI-Ergebnisse erscheinen später als prüfbare Vorschläge.`);}catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+  if(currentMode!=="server"){showMessage("Nur im Server-Modus","Die Schnellerfassung steht im Server-Modus zur Verfügung.");return;}
+  const enrich=$("quickCaptureUseAi").checked;
+  if(enrich&&!researchAvailable()){showMessage("KI-Recherche nicht aktiv","Deaktiviere "Mit KI recherchieren" oder aktiviere die Hintergrund-Recherche im Server-Setup.");return;}
+  const b=$("submitQuickCaptureButton");setBusy(b,true,enrich?"Reihe ein …":"Erfasse …");
+  try{
+    const result=await provider.quickCapture(text,$("quickCaptureLocation").value.trim(),enrich);$("quickCaptureInput").value="";await loadGames();if(enrich)await refreshQueue();
+    showMessage(enrich?"Erfasst & Recherche gestartet":"Spiele erfasst",enrich?`${result.count||0} Spiel${result.count===1?"":"e"} sind sofort in der Sammlung. KI-Ergebnisse erscheinen später als prüfbare Vorschläge.`:`${result.count||0} Spiel${result.count===1?"":"e"} sind in der Sammlung. Es wurde keine KI-Recherche gestartet.`);
+  }catch(err){showMessage("Schnellerfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);updateResearchControls();}
 }
 
 async function aiImageImport(files){
@@ -583,7 +606,7 @@ async function saveResearchSettings(event){
   }catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(submit,false);}
 }
 async function resetResearchSettings(){
-  if(!confirm("Primärquellen und Prompts auf die v8.4-Standardwerte zurücksetzen?"))return;
+  if(!confirm("Primärquellen und Prompts auf die v8.5-Standardwerte zurücksetzen?"))return;
   const b=$("resetResearchSettingsButton");setBusy(b,true,"Setze zurück …");
   try{await provider.resetResearchSettings();await loadSetup();$("researchSettingsStatus").textContent="Standardwerte wiederhergestellt.";}catch(err){$("researchSettingsStatus").textContent=err.message;}finally{setBusy(b,false);}
 }
@@ -627,7 +650,7 @@ async function switchMode(mode){
 function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
 
 function bindEvents(){
-  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("searchInput").addEventListener("input",renderGames);
+  $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("quickCaptureUseAi").addEventListener("change",updateResearchControls);$("searchInput").addEventListener("input",renderGames);
   $("viewListButton").addEventListener("click",()=>setCollectionView("list"));$("viewShelfButton").addEventListener("click",()=>setCollectionView("shelf"));
   $("tagFilterButton").addEventListener("click",()=>{const panel=$("tagFilterPanel"),open=panel.classList.contains("hidden");panel.classList.toggle("hidden",!open);$("tagFilterButton").setAttribute("aria-expanded",String(open));if(open)renderTagFilters();});
   $("clearTagFiltersButton").addEventListener("click",()=>{selectedTagFilters.clear();localStorage.removeItem("brettspielregal-tag-filters");renderGames();});

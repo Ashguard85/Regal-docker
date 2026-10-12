@@ -1,8 +1,18 @@
-# Brettspielregal – Docker Fullstack v8.4.0
+# Brettspielregal – Docker Fullstack v8.5.0
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
-## Neu in v8.4
+## Neu in v8.5
+
+### KI pro Erfassung abschaltbar
+
+Bei der Schnellerfassung gibt es jetzt **„Mit KI recherchieren“**. Ist der Schalter aus, werden die Spiele sofort gespeichert, aber **kein Queue-/Ollama-Auftrag** erzeugt. Dasselbe gilt beim manuellen Anlegen eines neuen Spiels über **„Nach dem Speichern mit KI recherchieren“**. Bestehende Spiele werden beim normalen Bearbeiten weiterhin nie automatisch neu recherchiert.
+
+### iPhone: keine automatische Textvergrößerung
+
+Safari/iOS bekommt jetzt `-webkit-text-size-adjust: 100%`; Eingabefelder bleiben auf kleinen Displays bei mindestens 16 px. Dadurch wird die Oberfläche beim Fokussieren oder nach Layoutänderungen nicht ungefragt hochskaliert. Pinch-Zoom bleibt aus Gründen der Bedienbarkeit und Barrierefreiheit weiterhin möglich.
+
+### Weiterhin enthalten aus v8.4
 
 ### KI recherchiert – du gibst frei
 
@@ -77,7 +87,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.4.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

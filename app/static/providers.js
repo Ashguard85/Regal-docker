@@ -93,7 +93,7 @@ export class LocalProvider{
     return games;
   }
   async get(id){const g=(await this.list()).find(g=>g.id===id);if(!g)throw new Error("Spiel wurde nicht gefunden.");return g;}
-  async create(data){const g=cleanGame(data);g.created_at=g.updated_at=nowIso();await putGame(g);return g;}
+  async create(data,_options={}){const g=cleanGame(data);g.created_at=g.updated_at=nowIso();await putGame(g);return g;}
   async update(id,data){const old=await getGame(id);if(!old)throw new Error("Spiel wurde nicht gefunden.");const g=cleanGame({...old,...data,id,created_at:old.created_at,updated_at:nowIso()});await putGame(g);return g;}
   async remove(id){await deleteGame(id);}
   async listAttachments(gameId){return (await getAllAttachments()).filter(a=>a.game_id===gameId).map(metadata);}
@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.4.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.5.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -153,7 +153,7 @@ export class ServerProvider{
   removeAttachment(gameId,attachmentId){return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`,{method:"DELETE"});}
   list(){return this.request("/api/games");}
   get(id){return this.request(`/api/games/${encodeURIComponent(id)}`);}
-  create(data){return this.request("/api/games",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});}
+  create(data,options={}){return this.request("/api/games",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...data,_auto_enrich:options.autoEnrich!==false})});}
   update(id,data){return this.request(`/api/games/${encodeURIComponent(id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});}
   remove(id){return this.request(`/api/games/${encodeURIComponent(id)}`,{method:"DELETE"});}
   exportData(){return this.request("/api/export",{timeoutMs:120000});}
@@ -176,7 +176,7 @@ export class ServerProvider{
   }
   searchRules(game){return this.request("/api/ai/rules-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:90000});}
   importQueue(){return this.request("/api/import-queue",{timeoutMs:20000});}
-  quickCapture(text,storageLocation=""){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,storage_location:storageLocation}),timeoutMs:60000});}
+  quickCapture(text,storageLocation="",enrich=true){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,storage_location:storageLocation,enrich:enrich!==false}),timeoutMs:60000});}
   enqueueEnrichment(gameId,query="",replaceActive=false){return this.request(`/api/import-queue/games/${encodeURIComponent(gameId)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query,replace_active:replaceActive}),timeoutMs:20000});}
   approveImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/approve`,{method:"POST",timeoutMs:20000});}
   applyImportSuggestions(jobId,fields=null){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/apply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields===null?{}:{fields}),timeoutMs:30000});}

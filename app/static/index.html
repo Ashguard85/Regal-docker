@@ -73,8 +73,8 @@
         </div>
 
         <div id="importUnavailable" class="import-unavailable hidden">
-          <strong>Hintergrund-Import nicht verfügbar</strong>
-          <p>Diese Funktion benötigt den Server-Modus mit aktivierter automatischer Ergänzung.</p>
+          <strong>KI-Hintergrundrecherche nicht verfügbar</strong>
+          <p>Du kannst Spiele weiterhin ohne KI schnell erfassen. Für automatische Recherche müssen Server-KI und Hintergrund-Ergänzung aktiv sein.</p>
         </div>
 
         <form id="quickCaptureForm" class="import-card">
@@ -88,7 +88,8 @@
 Cascadia
 Dorfromantik"></textarea></label>
           <label class="quick-capture-label">Lagerort für diese Einträge (optional)<input id="quickCaptureLocation" maxlength="180" placeholder="z. B. 1. Tablar"></label>
-          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang. Die Spiele erscheinen sofort in deiner Sammlung; KI-Daten bleiben zunächst Vorschläge.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Erfassen & recherchieren</button></div>
+          <label class="research-toggle"><input id="quickCaptureUseAi" type="checkbox" checked><span><strong>Mit KI recherchieren</strong><small>Aus: Spiele werden nur erfasst und nicht in die Hintergrund-Warteschlange gelegt.</small></span></label>
+          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang. Bei aktiver KI erscheinen Rechercheergebnisse später nur als prüfbare Vorschläge.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Erfassen & recherchieren</button></div>
         </form>
 
         <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
@@ -180,7 +181,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.4.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.5.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -200,6 +201,7 @@ amazon.de"></textarea>
       <div class="form-grid">
         <label class="full">Titel *<input id="titleInput" required maxlength="180"></label>
         <label class="full">Quell-Link<input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://…"></label>
+        <label id="newGameResearchRow" class="full research-toggle hidden"><input id="newGameAutoEnrich" type="checkbox" checked><span><strong>Nach dem Speichern mit KI recherchieren</strong><small>Aus: Das Spiel wird nur gespeichert. Du kannst die Recherche später jederzeit in der Detailansicht starten.</small></span></label>
         <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="aiImageButton" type="button" class="button">Screenshot auslesen</button><input id="aiImageInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Text/Link: Qwen · Screenshot/Bild: Gemma Vision · maximal 4 Bilder</span></div>
         <label class="full">Beschreibung<textarea id="descriptionInput" rows="4" maxlength="6000"></textarea></label>
         <label>Spieler min.<input id="minPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>

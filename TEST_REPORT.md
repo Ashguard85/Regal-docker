@@ -1,11 +1,11 @@
-# Test Report – v8.4.0
+# Test Report – v8.5.0
 
 ## Ausgeführt
 
 - Python `py_compile` für Backendmodule
 - JavaScript `node --check` für Frontendmodule
 - DOM-ID-Abgleich zwischen `index.html` und `app.js`
-- Backend-Kerntests ohne Flask: **35 bestanden**
+- Backend-Kerntests ohne Flask: **36 bestanden**
 
 Die Tests decken u. a. ab:
 
@@ -20,6 +20,8 @@ Die Tests decken u. a. ab:
 - Lagerort
 - temporäre KI-Vorschläge
 - Feld-für-Feld-Übernahme/Verwerfen ohne vorheriges Überschreiben
+- KI-Opt-out-Pfade in API/Frontend statisch geprüft
+- iPhone-Textskalierung (`text-size-adjust`, 16-px-Formfelder) geprüft
 
 ## Nicht in dieser Build-Umgebung ausführbar
 

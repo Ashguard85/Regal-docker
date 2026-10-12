@@ -52,7 +52,7 @@ def searxng_search(query, limit=None):
         response = requests.get(
             f"{base}/search",
             params={"q": query, "format": "json", "language": "de", "safesearch": "1"},
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.4"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.5"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
