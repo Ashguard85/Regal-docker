@@ -118,6 +118,12 @@ Gefundene Quellen:
 
 Recherchematerial:
 {{EVIDENCE}}
+
+V8.7-RECHERCHEBUNDLE:
+- SearXNG dient ausschließlich zum Finden möglicher URLs. Such-Snippets sind keine Faktenquelle.
+- Das Recherchematerial enthält nur vorab ausgewählte und direkt abgerufene Quellen sowie ggf. strukturierte BoardGameGeek-Daten.
+- Behandle jede Quelle getrennt und führe Werte erst danach zusammen.
+- Bei Konflikten konkrete deutsche Herstellerdaten für die Ausgabe bevorzugen; BGG für allgemeine Identität, Designer, Originaljahr, Spielerzahl und Mechaniken verwenden.
 """
 
 SETTING_KEYS = {
@@ -252,6 +258,7 @@ def render_research_prompt(query, current_game, sources, evidence, settings=None
         text = text.replace(token, value)
     if not had_allowed_tags:
         text += "\n\nVERBINDLICHE TAG-REGELN:\nWähle höchstens 8 Tags und ausschließlich exakt aus dieser deutschen Liste. Shop-Kategorien, Navigationsbegriffe und englische Freitags sind verboten.\n" + prompt_catalog()
-    # Alte benutzerdefinierte Prompts aus v8.2/v8.3 erhalten die Sprachregel trotzdem verbindlich.
+    # Alte benutzerdefinierte Prompts erhalten neue Sicherheits-/Pipeline-Regeln ebenfalls verbindlich.
     text += "\n\nVERBINDLICHE SPRACHREGEL: Alle frei formulierten Inhalte und Tags müssen auf Deutsch sein. Englische Quellen wie BoardGameGeek dürfen nur als Faktengrundlage dienen und müssen vor der Ausgabe ins Deutsche normalisiert werden."
+    text += "\n\nVERBINDLICHE V8.7-QUELLENREGEL: SearXNG-Suchtreffer und Such-Snippets dienen ausschließlich zur URL-Auswahl und sind keine Faktengrundlage. Das Feld EVIDENCE enthält bereits vorselektierte, direkt abgerufene Quellen und ggf. strukturierte BoardGameGeek-Daten. Werte pro Quelle getrennt bewerten und erst danach zusammenführen. Hersteller/Verlag schlägt BGG bei konkreter deutscher Ausgabe, EAN, Cover und Anleitung; BGG ist starke Referenz für Spielidentität, Designer, Jahr, Spielerzahl und Mechaniken."
     return text

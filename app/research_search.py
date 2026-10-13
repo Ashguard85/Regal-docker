@@ -1,5 +1,8 @@
 import json
 import os
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
 import requests
@@ -7,6 +10,7 @@ import requests
 from .security import validate_public_https_url
 from .ai_import import extract_page
 from .research_config import get_settings, source_trust
+from .bgg import identify as identify_bgg, BGGError
 
 
 class ResearchSearchError(RuntimeError):
@@ -44,6 +48,24 @@ def _int_env(name, default, lo, hi):
     return min(max(value, lo), hi)
 
 
+def provider_status():
+    provider = search_provider_name()
+    if provider == "none":
+        return {"status": "disabled", "provider": "none"}
+    base = _searxng_base_url()
+    try:
+        response = requests.get(
+            f"{base}/",
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.0"},
+            timeout=(3, 6), allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise ResearchSearchError("SearXNG ist vom Docker-Backend nicht erreichbar.") from exc
+    if response.status_code >= 400:
+        raise ResearchSearchError(f"SearXNG antwortete mit HTTP {response.status_code}.")
+    return {"status": "ok", "provider": "searxng", "http_status": response.status_code}
+
+
 def searxng_search(query, limit=None):
     base = _searxng_base_url()
     limit = limit or _int_env("AUTO_SEARCH_RESULTS", 8, 3, 15)
@@ -52,7 +74,7 @@ def searxng_search(query, limit=None):
         response = requests.get(
             f"{base}/search",
             params={"q": query, "format": "json", "language": "de", "safesearch": "1"},
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.5"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.0"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -65,8 +87,7 @@ def searxng_search(query, limit=None):
         payload = response.json()
     except ValueError as exc:
         raise ResearchSearchError("SearXNG lieferte kein gültiges JSON.") from exc
-    rows = []
-    seen = set()
+    rows, seen = [], set()
     for item in payload.get("results") or []:
         if not isinstance(item, dict):
             continue
@@ -89,84 +110,262 @@ def searxng_search(query, limit=None):
     return rows
 
 
-def search(query):
+def _norm(value):
+    value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^a-zA-Z0-9]+", " ", value.lower()).strip()
+    return re.sub(r"\s+", " ", value)
+
+
+def _expected_title(query, current_game=None):
+    current_game = current_game or {}
+    title = str(current_game.get("title") or "").strip()
+    if title and not title.lower().startswith("ean "):
+        return title
+    q = str(query or "").strip()
+    return "" if q.isdigit() else q
+
+
+def _query_ean(query, current_game=None):
+    current_game = current_game or {}
+    candidates = [current_game.get("ean"), query]
+    for value in candidates:
+        digits = re.sub(r"\D", "", str(value or ""))
+        if len(digits) in {8, 12, 13, 14}:
+            return digits
+    return ""
+
+
+def score_candidate(row, query, current_game=None, settings=None):
+    """Score a SearXNG URL before any page is fetched or shown to Ollama."""
+    settings = settings or get_settings()
+    current_game = current_game or {}
+    title = str(row.get("title") or "")
+    snippet = str(row.get("content") or "")
+    url = str(row.get("url") or "")
+    trust = source_trust(url, settings)
+    expected = _expected_title(query, current_game)
+    haystack = f"{title} {snippet}"
+    score, reasons = 0, []
+    if expected:
+        a, b = _norm(expected), _norm(title)
+        similarity = SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+        if a and a in b:
+            similarity = max(similarity, min(1.0, len(a) / max(len(b), 1) + 0.20))
+        title_points = int(round(similarity * 50))
+        score += title_points
+        reasons.append(f"Titel {int(round(similarity * 100))}%")
+    ean = _query_ean(query, current_game)
+    if ean and ean in re.sub(r"\D", "", haystack):
+        score += 100; reasons.append("EAN exakt")
+    trust_points = {"primary": 30, "reference": 18, "normal": 0, "low": -45}.get(trust, 0)
+    score += trust_points
+    if trust == "primary": reasons.append("Primärquelle")
+    elif trust == "reference": reasons.append("Referenzquelle")
+    elif trust == "low": reasons.append("niedrige Priorität")
+    lower = f"{title} {url}".lower()
+    if re.search(r"\b(rezension|review|spieltest|testbericht|forum|blog)\b", lower):
+        score -= 30; reasons.append("Review/Test")
+    query_lower = str(query or "").lower()
+    if re.search(r"\b(erweiterung|expansion|extension)\b", lower) and not re.search(r"\b(erweiterung|expansion|extension)\b", query_lower):
+        score -= 45; reasons.append("mögliche Erweiterung")
+    if "boardgamegeek.com/boardgame/" in url.lower():
+        score += 18; reasons.append("BGG-Spielseite")
+    publisher = _norm(current_game.get("publisher"))
+    if publisher and publisher in _norm(haystack):
+        score += 12; reasons.append("Verlag passt")
+    year = current_game.get("year")
+    if year and str(year) in haystack:
+        score += 7; reasons.append("Jahr passt")
+    row = dict(row)
+    row.update({"trust": trust, "score": score, "reasons": reasons})
+    return row
+
+
+def _search_queries(query, current_game, settings):
+    expected = _expected_title(query, current_game)
+    ean = _query_ean(query, current_game)
+    queries = []
+    if ean:
+        queries += [f'"{ean}" Brettspiel', f'"{ean}" Spiel']
+    if expected:
+        queries += [f'"{expected}" Brettspiel', f'"{expected}" Spiel Verlag']
+        # One focused BGG URL-discovery query. Structured BGG lookup runs independently.
+        queries.append(f'"{expected}" site:boardgamegeek.com/boardgame')
+        primary = (settings.get("primary_domains") or [])[:7]
+        if primary:
+            queries.append(f'"{expected}" (' + " OR ".join(f"site:{d}" for d in primary) + ")")
+    if not queries:
+        queries.append(str(query))
+    out = []
+    for q in queries:
+        if q not in out:
+            out.append(q)
+    return out[:5]
+
+
+def search(query, current_game=None):
     provider = search_provider_name()
     if provider == "none":
         raise ResearchSearchError("Automatische Websuche ist nicht eingerichtet (AUTO_SEARCH_PROVIDER=none).")
     settings = get_settings()
-    rows = []
-    # Primärquellen zuerst gezielt anfragen. SearXNG reicht site:-Operatoren an die Suchmaschinen weiter.
-    primary = settings.get("primary_domains") or []
-    reference = settings.get("reference_domains") or []
-    preferred = (primary + reference)[:10]
-    if preferred:
-        domain_clause = " OR ".join(f"site:{d}" for d in preferred)
+    current_game = current_game or {}
+    rows, errors = [], []
+    for q in _search_queries(query, current_game, settings):
         try:
-            rows.extend(searxng_search(f"{query} ({domain_clause})", limit=12))
-        except ResearchSearchError:
-            pass
-    # BoardGameGeek gezielt zusätzlich anfragen, weil Titel und IDs häufig besser matchen als bei Shops.
-    if reference:
-        ref_clause = " OR ".join(f"site:{d}" for d in reference[:4])
-        try:
-            rows.extend(searxng_search(f"{query} ({ref_clause})", limit=6))
-        except ResearchSearchError:
-            pass
-    rows.extend(searxng_search(query))
+            rows.extend(searxng_search(q, limit=8))
+        except ResearchSearchError as exc:
+            errors.append(str(exc))
+    if not rows and errors:
+        raise ResearchSearchError(errors[-1])
     dedup = {}
     for row in rows:
         url = row.get("url")
         if not url or url in dedup:
             continue
-        row = dict(row)
-        row["trust"] = source_trust(url, settings)
-        dedup[url] = row
-    order = {"primary": 0, "reference": 1, "normal": 2, "low": 3}
-    return sorted(dedup.values(), key=lambda x: order.get(x.get("trust"), 1))[:15]
+        dedup[url] = score_candidate(row, query, current_game, settings)
+    return sorted(dedup.values(), key=lambda x: (x.get("score", -999), -len(x.get("url", ""))), reverse=True)[:30]
 
 
-def research_game(query):
+def _select_candidates(candidates, max_pages):
+    """Choose only a few strong and diverse pages. SearXNG snippets never become evidence."""
+    selected, seen_hosts = [], set()
+    # Primary sources first, then strong general sources. BGG HTML is redundant when structured BGG succeeded.
+    ordered = sorted(candidates, key=lambda x: (x.get("trust") == "primary", x.get("score", -999)), reverse=True)
+    for row in ordered:
+        trust, score = row.get("trust"), int(row.get("score") or 0)
+        if trust == "low" or "boardgamegeek.com/boardgame/" in str(row.get("url", "")).lower():
+            continue
+        host = (urlparse(row["url"]).hostname or "").lower()
+        threshold = 12 if trust == "primary" else 22
+        if score < threshold:
+            continue
+        if host in seen_hosts:
+            continue
+        selected.append(row); seen_hosts.add(host)
+        if len(selected) >= max_pages:
+            break
+    if not selected:
+        fallback = next((r for r in candidates if r.get("trust") != "low" and int(r.get("score") or 0) >= 5), None)
+        if fallback:
+            selected.append(fallback)
+    selected_urls = {r["url"] for r in selected}
+    ignored = [r for r in candidates if r.get("url") not in selected_urls][:10]
+    return selected, ignored
+
+
+def _compact_page_bundle(result, fallback, structured, text, warnings):
+    # Search snippets are intentionally excluded. Ollama receives only data fetched from the selected URL.
+    safe_structured = {
+        "page_title": structured.get("page_title", ""),
+        "meta_description": structured.get("meta_description", ""),
+        "jsonld_product": structured.get("jsonld_product", {}),
+    }
+    return {
+        "kind": "web_page",
+        "url": result["url"],
+        "title": result.get("title", ""),
+        "trust": result.get("trust", "normal"),
+        "candidate_score": result.get("score", 0),
+        "candidate_reasons": result.get("reasons", []),
+        "extracted": fallback,
+        "structured": safe_structured,
+        "warnings": warnings,
+        "text_excerpt": str(text or "")[:4500],
+    }
+
+
+def research_game(query, current_game=None):
     query = str(query or "").strip()
     if not query:
         raise ResearchSearchError("Suchbegriff fehlt.")
-    results = search(query)
-    if not results:
-        raise ResearchSearchError("Die Websuche hat keine passenden Treffer geliefert.")
+    current_game = current_game or {}
+    candidates = search(query, current_game)
+    max_pages = _int_env("AUTO_FETCH_PAGES", 3, 1, 4)
+    max_total_chars = _int_env("AUTO_RESEARCH_MAX_CHARS", 24000, 8000, 50000)
+    selected, ignored = _select_candidates(candidates, max_pages)
 
-    max_pages = _int_env("AUTO_FETCH_PAGES", 4, 1, 8)
-    max_total_chars = _int_env("AUTO_RESEARCH_MAX_CHARS", 30000, 8000, 60000)
-    chunks = [f"Suchanfrage: {query}\n"]
-    sources = []
+    bgg_identity, bgg_error = None, ""
+    try:
+        bgg_identity = identify_bgg(query, current_game)
+    except BGGError as exc:
+        bgg_error = str(exc)
+
+    bundles, sources, extracted_titles = [], [], []
+
     fetched = 0
-
-    for index, result in enumerate(results, 1):
-        sources.append(result["url"])
-        trust = result.get("trust") or "normal"
-        chunks.append(
-            f"\n=== Suchtreffer {index} [{trust.upper()}] ===\nTitel: {result['title']}\nURL: {result['url']}\nSuchsnippet: {result['content']}\n"
-        )
-        if trust == "low":
-            chunks.append("Niedrig priorisierte Quelle: nicht direkt als Kerndatenquelle abrufen.\n")
-            continue
-        if trust == "reference":
-            chunks.append("Strukturierte Referenzquelle: für allgemeine Spieldaten nutzen; deutsche Ausgabe, EAN, Cover und Anleitung gegen Herstellerdaten prüfen.\n")
-        if fetched >= max_pages:
-            continue
+    for result in selected:
         try:
             fallback, text, structured, warnings = extract_page(result["url"])
         except Exception as exc:
-            chunks.append(f"Direkter Abruf nicht verfügbar: {str(exc)[:180]}\n")
+            result["fetch_error"] = str(exc)[:180]
             continue
         fetched += 1
-        chunks.append("Vorab extrahierte Metadaten: " + json.dumps(fallback, ensure_ascii=False)[:5000] + "\n")
-        if structured:
-            chunks.append("Strukturierte Seitendaten: " + json.dumps(structured, ensure_ascii=False)[:4000] + "\n")
-        if warnings:
-            chunks.append("Erkannte Warnungen: " + json.dumps(warnings, ensure_ascii=False)[:1500] + "\n")
-        if text:
-            chunks.append("Seitentext:\n" + text[:7000] + "\n")
-        if sum(len(x) for x in chunks) >= max_total_chars:
-            break
+        sources.append(result["url"])
+        title = str(fallback.get("title") or "").strip()
+        if title and title not in extracted_titles:
+            extracted_titles.append(title)
+        bundles.append(_compact_page_bundle(result, fallback, structured, text, warnings))
 
-    evidence = "".join(chunks)[:max_total_chars]
-    return {"query": query, "sources": sources[:20], "evidence": evidence, "results": results, "pages_fetched": fetched}
+    # EAN-first capture has no title for the BGG search. Once a strong product page
+    # reveals the title, do one structured BGG identity lookup with that title.
+    if not bgg_identity and extracted_titles:
+        try:
+            bgg_identity = identify_bgg(extracted_titles[0], {**current_game, "title": extracted_titles[0]})
+        except BGGError as exc:
+            bgg_error = str(exc)
+
+    if bgg_identity:
+        bgg_data = bgg_identity["data"]
+        sources.insert(0, bgg_data["url"])
+        bundles.insert(0, {
+            "kind": "bgg_structured",
+            "url": bgg_data["url"],
+            "trust": "reference",
+            "identity_score": bgg_identity["score"],
+            "matched_name": bgg_identity["matched_name"],
+            "data": bgg_data,
+        })
+
+    if not bundles:
+        raise ResearchSearchError("Es wurden keine ausreichend verlässlichen Quellen gefunden oder abgerufen.")
+
+    evidence_obj = {
+        "pipeline": "v8.7-preselected-sources",
+        "query": query,
+        "important": "SearXNG wurde nur zum Finden von URLs verwendet. Such-Snippets sind KEINE Faktengrundlage.",
+        "sources": bundles,
+    }
+    evidence = json.dumps(evidence_obj, ensure_ascii=False, separators=(",", ":"))[:max_total_chars]
+    selected_report = []
+    if bgg_identity:
+        selected_report.append({
+            "kind": "bgg_structured", "title": bgg_identity["data"].get("name") or bgg_identity["matched_name"],
+            "url": bgg_identity["data"]["url"], "trust": "reference", "score": bgg_identity["score"],
+            "reasons": ["strukturierte BGG-Daten", f"Titelmatch: {bgg_identity['matched_name']}"]
+        })
+    selected_urls = {r.get("url") for r in selected}
+    for row in candidates:
+        if row.get("url") in selected_urls:
+            selected_report.append({k: row.get(k) for k in ("title", "url", "trust", "score", "reasons")})
+    ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons")} for row in ignored]
+    report = {
+        "pipeline": "v8.7",
+        "identity": ({
+            "provider": "BoardGameGeek", "bgg_id": bgg_identity["data"]["bgg_id"],
+            "title": bgg_identity["data"].get("name", ""), "matched_name": bgg_identity["matched_name"],
+            "score": bgg_identity["score"], "url": bgg_identity["data"]["url"],
+        } if bgg_identity else None),
+        "bgg_error": bgg_error,
+        "selected": selected_report[:5],
+        "ignored": ignored_report[:8],
+        "candidate_count": len(candidates),
+        "pages_fetched": fetched,
+    }
+    return {
+        "query": query,
+        "sources": sources[:5],
+        "evidence": evidence,
+        "results": candidates,
+        "pages_fetched": fetched,
+        "research": report,
+    }

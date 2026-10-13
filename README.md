@@ -1,7 +1,48 @@
-# Brettspielregal – Docker Fullstack v8.5.2
+# Brettspielregal – Docker Fullstack v8.7.0
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
+
+## Neu in v8.7.0
+
+### Webrecherche grundlegend neu aufgebaut
+
+Die allgemeine Websuche ist nicht mehr die Faktengrundlage für Ollama. Der Hintergrundimport arbeitet jetzt in klar getrennten Schritten:
+
+1. Titel/EAN erfassen – das Spiel steht sofort in der Sammlung.
+2. BoardGameGeek wird als **strukturierte Identitätsquelle** abgefragt, wenn ein Titel vorhanden ist.
+3. SearXNG sucht mit mehreren gezielten Queries nur nach möglichen URLs.
+4. Treffer werden **vor dem Abruf** bewertet: Titelähnlichkeit, exakte EAN, Primärquelle, Verlag/Jahr sowie Abzüge für Review/Test oder mögliche Erweiterungen.
+5. Nur die besten **2–4 Quellen** werden direkt geladen. Such-Snippets werden nicht an Ollama als Fakten weitergegeben.
+6. Jede ausgewählte Quelle wird getrennt deterministisch extrahiert (JSON-LD/Metadaten/Seitentext).
+7. Erst das kleine, vorselektierte Recherchebundle geht an Qwen3 14B zur Zusammenführung und deutschen Normalisierung.
+8. Die Ergebnisse bleiben weiterhin temporäre Vorschläge und überschreiben deine Sammlung erst nach Freigabe.
+
+Bei einer EAN-Erfassung versucht v8.7 zuerst eine passende Produktseite zu finden. Sobald daraus ein plausibler Titel extrahiert wurde, wird BGG zusätzlich mit diesem Titel als strukturierte Referenz abgefragt. Für die aktuelle BGG-XML-API muss `BGG_API_TOKEN` gesetzt sein; ohne Token läuft die Recherche weiter, nur der strukturierte BGG-Schritt wird übersprungen.
+
+### Transparente Quellenauswahl
+
+In **Vorschläge prüfen** wird jetzt sichtbar:
+
+- welche BGG-Identität erkannt wurde und mit welchem Match-Score,
+- welche Quellen tatsächlich an Ollama weitergegeben wurden,
+- welche Suchtreffer vorher verworfen wurden und warum.
+
+Der Direktlink-Import bleibt unverändert der präziseste Weg: dort entfällt die allgemeine Suchphase vollständig.
+
+### GitHub Pages + Docker aus v8.6 bleibt enthalten
+
+Mehrere externe Frontend-Origins über `PWA_ALLOWED_ORIGINS`, Systemdiagnose für API/Worker/Ollama/SearXNG/CORS und same-origin Betrieb der lokalen Docker-Seite bleiben unverändert verfügbar.
+
+## Neu in v8.5.3
+
+### Laufende und hängende Hintergrundjobs abbrechen
+
+Laufende Importjobs besitzen direkt in **Import → Warteschlange & Prüfung** einen **Abbrechen**-Button. Jeder Auftrag läuft in einem eigenen Worker-Unterprozess, damit auch ein festhängender SearXNG-/Ollama-Aufruf tatsächlich beendet werden kann.
+
+- `Abbrechen` setzt eine Abbruchanforderung; der Worker-Supervisor beendet den Job-Unterprozess und markiert den Auftrag als `cancelled`.
+- Wenn ein Auftrag länger keinen Fortschritt macht oder der Abbruch nicht bestätigt wird, erscheint **Hängenden Auftrag freigeben**.
+- Temporäre KI-Vorschläge des abgebrochenen Jobs werden verworfen; das Spiel selbst bleibt erhalten.
 
 ## Neu in v8.5.2
 
@@ -72,7 +113,7 @@ Unter **Setup → Automatische Recherche – Quellen & Prompt** gibt es jetzt dr
 
 ### Backup / Migration
 
-- Datenbankschema: **6**
+- Datenbankschema: **8**
 - Backupformat: **4**
 - Backup v1–v4 bleibt importierbar.
 - Anhänge sind weiterhin im JSON-Backup enthalten.
@@ -97,7 +138,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.5.2.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 
@@ -108,17 +149,26 @@ OLLAMA_TEXT_MODEL: "qwen3:14b"
 OLLAMA_VISION_MODEL: "gemma3:12b"
 AUTO_SEARCH_PROVIDER: "searxng"
 SEARXNG_BASE_URL: "http://searxng:8080"
+BGG_ENABLED: "true"
+BGG_API_TOKEN: "${BGG_API_TOKEN:-}"
+BGG_TIMEOUT_SECONDS: "15"
+BGG_MIN_INTERVAL_SECONDS: "5"
+AUTO_FETCH_PAGES: "3"
+AUTO_RESEARCH_MAX_CHARS: "24000"
 ```
 
 Die fachlichen Quellen und Prompts werden dagegen im App-Setup gepflegt und persistent in SQLite gespeichert.
 
 ## Neue/erweiterte API-Routen
 
+- `GET /api/system/status`
 - `GET /api/import-queue`
 - `POST /api/import-queue/cleanup`
 - `POST /api/import-queue/quick`
 - `POST /api/import-queue/games/<game_id>`
 - `POST /api/import-queue/<job_id>/retry`
+- `POST /api/import-queue/<job_id>/cancel`
+- `POST /api/import-queue/<job_id>/force-release`
 - `POST /api/import-queue/<job_id>/suggestions/apply`
 - `POST /api/import-queue/<job_id>/suggestions/reject`
 - `GET/PUT/POST /api/research-settings`
@@ -131,3 +181,10 @@ PYTHONPATH=. pytest -q
 ```
 
 Frontend zusätzlich mit `node --check` prüfen.
+
+
+## v8.7 – GitHub Pages + Docker
+
+Mehrere externe Frontend-Origins können mit `PWA_ALLOWED_ORIGINS` (Komma, Semikolon oder neue Zeile) freigegeben werden. Die alte Variable `PWA_ALLOWED_ORIGIN` wird als Fallback weiter unterstützt. Die lokale Docker-Oberfläche ist same-origin und benötigt technisch keinen CORS-Eintrag.
+
+Unter **Setup → Verbindung / Server** zeigt die App einen Systemstatus für Backend, API, Worker, Ollama/KI, SearXNG und CORS.

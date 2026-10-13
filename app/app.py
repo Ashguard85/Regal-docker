@@ -8,12 +8,39 @@ from io import BytesIO
 from . import db, attachments
 from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
-from .research_search import search_provider_name as auto_search_provider_name
+from .research_search import search_provider_name as auto_search_provider_name, provider_status as search_provider_status, ResearchSearchError
 from .research_config import get_settings as get_research_settings, save_settings as save_research_settings, reset_settings as reset_research_settings
 from .tags import tag_catalog, normalize_tags
+from .security import parse_allowed_origins
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
+
+
+def _configured_cors_origins():
+    # v8.7: plural variable supports GitHub Pages, custom domains and optional LAN frontends.
+    # The singular v8.5 variable remains a backwards-compatible fallback.
+    plural = os.environ.get("PWA_ALLOWED_ORIGINS", "")
+    legacy = os.environ.get("PWA_ALLOWED_ORIGIN", "")
+    return parse_allowed_origins(plural, legacy)
+
+
+def _cors_status_for_request():
+    allowed, invalid = _configured_cors_origins()
+    origin = (request.headers.get("Origin") or "").rstrip("/")
+    if not origin:
+        status = "not_required"
+        permitted = True
+    else:
+        permitted = origin in set(allowed)
+        status = "ok" if permitted else "blocked"
+    return {
+        "status": status,
+        "allowed": permitted,
+        "origin": origin,
+        "configured_count": len(allowed),
+        "invalid_entries": invalid,
+    }
 
 
 def create_app(test_config=None):
@@ -29,8 +56,8 @@ def create_app(test_config=None):
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         origin = request.headers.get("Origin")
-        allowed = os.environ.get("PWA_ALLOWED_ORIGIN", "").rstrip("/")
-        if origin and allowed and origin.rstrip("/") == allowed:
+        allowed_origins, _invalid_origins = _configured_cors_origins()
+        if origin and origin.rstrip("/") in set(allowed_origins):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
@@ -42,6 +69,38 @@ def create_app(test_config=None):
     def health():
         return jsonify(status="ok")
 
+    @app.route("/api/system/status", methods=["GET", "OPTIONS"])
+    def system_status():
+        if request.method == "OPTIONS": return ("", 204)
+        worker = db.worker_state()
+        ai_enabled = os.environ.get("AI_IMPORT_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+        if not ai_enabled:
+            ai = {"status": "disabled", "provider": provider_public_config().get("ai_provider", "none")}
+        else:
+            try:
+                ai = provider_status()
+            except AIProviderError as exc:
+                ai = {"status": "error", "error": str(exc), "provider": provider_public_config().get("ai_provider", "none")}
+        try:
+            search = search_provider_status()
+        except ResearchSearchError as exc:
+            try:
+                search_provider = auto_search_provider_name()
+            except ResearchSearchError:
+                search_provider = "invalid"
+            search = {"status": "error", "provider": search_provider, "error": str(exc)}
+        return jsonify(
+            status="ok",
+            version="8.7.0",
+            backend={"status": "ok"},
+            api={"status": "ok"},
+            worker=worker,
+            ai=ai,
+            search=search,
+            research={"pipeline":"v8.7-preselected-sources","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
+            cors=_cors_status_for_request(),
+        )
+
     @app.route("/api/config", methods=["GET", "OPTIONS"])
     def api_config():
         if request.method == "OPTIONS": return ("", 204)
@@ -49,12 +108,15 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.5.2",
+            version="8.7.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
             auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
             auto_search_provider=auto_search_provider_name(),
+            research_pipeline="v8.7-preselected-sources",
+            bgg_enabled=os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},
+            bgg_configured=bool(os.environ.get("BGG_API_TOKEN", "").strip()),
             tag_catalog=tag_catalog(),
             **public_ai,
         )
@@ -126,7 +188,16 @@ def create_app(test_config=None):
     @app.route("/api/import-queue", methods=["GET", "OPTIONS"])
     def import_queue():
         if request.method == "OPTIONS": return ("", 204)
-        return jsonify(jobs=db.list_import_jobs(150), worker=db.worker_state())
+        try:
+            stuck_minutes = min(max(int(os.environ.get("AUTO_ENRICH_STUCK_MINUTES", "10")), 2), 60)
+        except ValueError:
+            stuck_minutes = 10
+        return jsonify(
+            jobs=db.list_import_jobs(150),
+            worker=db.worker_state(),
+            force_release_after_seconds=stuck_minutes * 60,
+            force_release_cancel_grace_seconds=15,
+        )
 
     @app.route("/api/import-queue/cleanup", methods=["POST", "OPTIONS"])
     def cleanup_import_queue():
@@ -195,6 +266,22 @@ def create_app(test_config=None):
     def retry_import_job(job_id):
         if request.method == "OPTIONS": return ("", 204)
         try: job = db.retry_import_job(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(job)
+
+    @app.route("/api/import-queue/<job_id>/cancel", methods=["POST", "OPTIONS"])
+    def request_cancel_import_job(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: job = db.request_cancel_import_job(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(job)
+
+    @app.route("/api/import-queue/<job_id>/force-release", methods=["POST", "OPTIONS"])
+    def force_release_import_job(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: job = db.force_release_import_job(job_id)
         except ValueError as exc: return jsonify(error=str(exc)), 409
         if not job: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
         return jsonify(job)

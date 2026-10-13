@@ -103,3 +103,55 @@ def test_cleanup_import_jobs_keeps_running_and_can_remove_reviews():
         assert result["deleted"] == 1
         assert result["running_protected"] == 1
         assert db.get_import_job(running["id"])["status"] == "running"
+
+
+def test_running_job_can_request_cancel_and_late_worker_update_is_ignored():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        db.save_game(db.normalize_game({"id": "g1", "title": "Skull Queen"}))
+        job = db.enqueue_import_job("g1", "Skull Queen")
+        running = db.claim_import_job()
+        assert running["status"] == "running"
+
+        requested = db.request_cancel_import_job(job["id"])
+        assert requested["status"] == "running"
+        assert requested["cancel_requested"] is True
+        assert requested["cancel_requested_at"]
+
+        # A late worker response must not resurrect or mutate a cancelling job.
+        late = db.update_import_job(job["id"], status="review", progress="Zu spät", finished=True)
+        assert late["status"] == "running"
+        assert late["cancel_requested"] is True
+        assert late["progress"].startswith("Abbruch angefordert")
+
+        final = db.finalize_cancel_import_job(job["id"])
+        assert final["status"] == "cancelled"
+        assert final["cancel_requested"] is True
+
+
+def test_force_release_running_job_discards_temporary_suggestions():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        db.save_game(db.normalize_game({"id": "g1", "title": "Patchwork"}))
+        job = db.enqueue_import_job("g1", "Patchwork")
+        db.claim_import_job()
+        assert db.replace_import_suggestions(
+            job["id"], "g1", {"title": "Patchwork", "description": "Vorschlag"}, db.get_game("g1")
+        ) == 1
+        assert db.list_import_suggestions(job["id"])
+
+        released = db.force_release_import_job(job["id"])
+        assert released["status"] == "cancelled"
+        assert released["progress"] == "Hängender Auftrag freigegeben"
+        assert db.list_import_suggestions(job["id"]) == []
+
+
+def test_queued_job_is_cancelled_immediately():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = load_db(tmp)
+        db.save_game(db.normalize_game({"id": "g1", "title": "Flip 7"}))
+        job = db.enqueue_import_job("g1", "Flip 7")
+        cancelled = db.request_cancel_import_job(job["id"])
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["cancel_requested"] is True
+        assert db.claim_import_job() is None

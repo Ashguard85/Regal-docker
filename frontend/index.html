@@ -115,8 +115,20 @@ Dorfromantik"></textarea></label>
             <label>Backend URL<input id="backendUrl" type="url" inputmode="url" placeholder="https://api.example.com" autocomplete="url"></label>
             <label>Cloudflare Client ID<input id="cfClientId" type="text" autocomplete="off" autocapitalize="none"></label>
             <label>Cloudflare Client Secret<div class="secret-row"><input id="cfClientSecret" type="password" autocomplete="new-password" placeholder="Neu setzen oder leer lassen"><button id="clearSecretsButton" type="button" class="button subtle">Löschen</button></div></label>
-            <div class="button-row"><button class="button primary" type="submit">Verbindung speichern</button><button id="testConnectionButton" class="button" type="button">Verbindung testen</button></div>
+            <div class="button-row"><button class="button primary" type="submit">Verbindung speichern</button><button id="testConnectionButton" class="button" type="button">Systemstatus prüfen</button></div>
           </form>
+          <div id="connectionDiagnostics" class="connection-diagnostics" aria-live="polite">
+            <div class="diagnostic-head"><strong>Verbindungsstatus</strong><span id="diagnosticOrigin" class="hint"></span></div>
+            <div class="diagnostic-grid">
+              <div class="diagnostic-row"><span>Backend</span><strong id="diagBackend" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>API</span><strong id="diagApi" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Worker</span><strong id="diagWorker" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Ollama / KI</span><strong id="diagOllama" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>SearXNG</span><strong id="diagSearxng" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>CORS</span><strong id="diagCors" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+            </div>
+            <p id="diagnosticHint" class="hint"></p>
+          </div>
           <p class="hint">Service-Tokens werden nur in IndexedDB auf diesem Gerät gespeichert, nie exportiert und nach dem Speichern nicht wieder vollständig angezeigt.</p>
         </div></details>
 
@@ -181,7 +193,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.5.2</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">8.7.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 

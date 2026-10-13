@@ -7,7 +7,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 BACKUP_VERSION = 4
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3, 4}
 
@@ -158,6 +158,22 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_import_suggestions_game ON import_suggestions(game_id, status);
             """)
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (6, utcnow()))
+
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 7 not in applied:
+            existing = _columns(conn, "import_jobs")
+            if "cancel_requested" not in existing:
+                conn.execute("ALTER TABLE import_jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
+            if "cancel_requested_at" not in existing:
+                conn.execute("ALTER TABLE import_jobs ADD COLUMN cancel_requested_at TEXT NOT NULL DEFAULT ''")
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (7, utcnow()))
+
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 8 not in applied:
+            existing = _columns(conn, "import_jobs")
+            if "research_json" not in existing:
+                conn.execute("ALTER TABLE import_jobs ADD COLUMN research_json TEXT NOT NULL DEFAULT '{}'")
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (8, utcnow()))
 
 
 def get_app_settings(keys=None):
@@ -343,11 +359,13 @@ def _job_row(row):
     if row is None:
         return None
     data = dict(row)
-    for key in ("warnings_json", "sources_json"):
+    for key in ("warnings_json", "sources_json", "research_json"):
         try:
-            data[key[:-5]] = json.loads(data.pop(key) or "[]")
+            default = "{}" if key == "research_json" else "[]"
+            data[key[:-5]] = json.loads(data.pop(key) or default)
         except json.JSONDecodeError:
-            data[key[:-5]] = []
+            data[key[:-5]] = {} if key == "research_json" else []
+    data["cancel_requested"] = bool(data.get("cancel_requested"))
     return data
 
 
@@ -379,11 +397,11 @@ def enqueue_import_job(game_id, query, *, replace_active=False):
         if active and not replace_active:
             return _job_row(active)
         if active and replace_active:
-            conn.execute("UPDATE import_jobs SET status='cancelled', progress='Durch neuen Auftrag ersetzt', updated_at=?, finished_at=? WHERE id=?", (now, now, active['id']))
+            conn.execute("UPDATE import_jobs SET status='cancelled', progress='Durch neuen Auftrag ersetzt', cancel_requested=1, cancel_requested_at=?, updated_at=?, finished_at=? WHERE id=?", (now, now, now, active['id']))
         import uuid
         job_id = str(uuid.uuid4())
-        conn.execute("INSERT INTO import_jobs(id,game_id,query,status,progress,attempts,error,warnings_json,sources_json,created_at,updated_at,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                     (job_id, game_id, query, 'queued', 'Wartet auf automatische Ergänzung', 0, '', '[]', '[]', now, now, '', ''))
+        conn.execute("INSERT INTO import_jobs(id,game_id,query,status,progress,attempts,error,warnings_json,sources_json,created_at,updated_at,started_at,finished_at,cancel_requested,cancel_requested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (job_id, game_id, query, 'queued', 'Wartet auf automatische Ergänzung', 0, '', '[]', '[]', now, now, '', '', 0, ''))
         row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
         return _job_row(row)
 
@@ -438,7 +456,7 @@ def retry_import_job(job_id):
         if row['status'] == 'running':
             raise ValueError("Ein laufender Auftrag kann nicht erneut gestartet werden.")
         conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
-        conn.execute("UPDATE import_jobs SET status='queued', progress='Wartet auf erneuten Versuch', error='', warnings_json='[]', sources_json='[]', updated_at=?, started_at='', finished_at='' WHERE id=?", (now, job_id))
+        conn.execute("UPDATE import_jobs SET status='queued', progress='Wartet auf erneuten Versuch', error='', warnings_json='[]', sources_json='[]', research_json='{}', cancel_requested=0, cancel_requested_at='', updated_at=?, started_at='', finished_at='' WHERE id=?", (now, job_id))
         return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
 
 
@@ -448,16 +466,66 @@ def approve_import_job(job_id):
     return get_import_job(job_id) if result is not None else None
 
 
-def cancel_import_job(job_id):
+def request_cancel_import_job(job_id):
+    """Request cancellation of a queued/running job.
+
+    Queued jobs can be cancelled immediately. Running jobs are marked for
+    cancellation; the worker supervisor terminates the job process.
+    """
     now = utcnow()
     with connect() as conn:
         row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
         if not row:
-            return False
-        if row['status'] == 'running':
-            raise ValueError("Ein bereits laufender Auftrag kann nicht sicher abgebrochen werden.")
-        conn.execute("UPDATE import_jobs SET status='cancelled', progress='Abgebrochen', updated_at=?, finished_at=? WHERE id=?", (now, now, job_id))
-        return True
+            return None
+        if row["status"] == "queued":
+            conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
+            conn.execute("""UPDATE import_jobs
+                            SET status='cancelled', progress='Abgebrochen', cancel_requested=1,
+                                cancel_requested_at=?, updated_at=?, finished_at=?
+                            WHERE id=?""", (now, now, now, job_id))
+        elif row["status"] == "running":
+            if not row["cancel_requested"]:
+                conn.execute("""UPDATE import_jobs
+                                SET cancel_requested=1, cancel_requested_at=?,
+                                    progress='Abbruch angefordert – laufender Schritt wird beendet …',
+                                    updated_at=?
+                                WHERE id=?""", (now, now, job_id))
+        elif row["status"] in {"review", "failed", "done", "verified", "cancelled"}:
+            raise ValueError("Dieser Auftrag läuft nicht mehr.")
+        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+def finalize_cancel_import_job(job_id, progress="Abgebrochen"):
+    """Finalize cancellation and discard temporary proposals. Idempotent."""
+    now = utcnow()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
+        conn.execute("""UPDATE import_jobs
+                        SET status='cancelled', progress=?, cancel_requested=1,
+                            cancel_requested_at=CASE WHEN cancel_requested_at='' THEN ? ELSE cancel_requested_at END,
+                            updated_at=?, finished_at=?
+                        WHERE id=?""", (str(progress)[:500], now, now, now, job_id))
+        return _job_row(conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone())
+
+
+def force_release_import_job(job_id):
+    """Release an orphaned/stuck running job without deleting the game."""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        if row["status"] != "running":
+            raise ValueError("Nur ein laufender Auftrag kann freigegeben werden.")
+    return finalize_cancel_import_job(job_id, "Hängender Auftrag freigegeben")
+
+
+def cancel_import_job(job_id):
+    """Compatibility: cancel queued jobs and request cancellation for running jobs."""
+    job = request_cancel_import_job(job_id)
+    return job is not None
 
 
 def cleanup_import_jobs(mode="history"):
@@ -490,18 +558,40 @@ def claim_import_job(stale_minutes=30):
     stale_before = (datetime.now(timezone.utc) - timedelta(minutes=max(5, int(stale_minutes)))).isoformat().replace('+00:00', 'Z')
     with connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("UPDATE import_jobs SET status='queued', progress='Nach Worker-Neustart erneut eingereiht', updated_at=?, started_at='' WHERE status='running' AND started_at<>'' AND started_at<?", (now, stale_before))
-        row = conn.execute("SELECT * FROM import_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1").fetchone()
+        # A cancellation request must never be revived after a worker restart.
+        conn.execute("""UPDATE import_jobs
+                        SET status='cancelled', progress='Abbruch abgeschlossen',
+                            updated_at=?, finished_at=?
+                        WHERE status='running' AND cancel_requested=1""", (now, now))
+        conn.execute("""UPDATE import_jobs
+                        SET status='queued', progress='Nach Worker-Neustart erneut eingereiht',
+                            updated_at=?, started_at='', cancel_requested=0, cancel_requested_at=''
+                        WHERE status='running' AND cancel_requested=0
+                          AND started_at<>'' AND started_at<?""", (now, stale_before))
+        row = conn.execute("SELECT * FROM import_jobs WHERE status='queued' AND cancel_requested=0 ORDER BY created_at ASC LIMIT 1").fetchone()
         if not row:
             conn.commit()
             return None
-        conn.execute("UPDATE import_jobs SET status='running', progress='Recherche wird gestartet', attempts=attempts+1, error='', updated_at=?, started_at=?, finished_at='' WHERE id=? AND status='queued'", (now, now, row['id']))
+        conn.execute("""UPDATE import_jobs
+                        SET status='running', progress='Recherche wird gestartet',
+                            attempts=attempts+1, error='', cancel_requested=0, cancel_requested_at='',
+                            updated_at=?, started_at=?, finished_at=''
+                        WHERE id=? AND status='queued'""", (now, now, row['id']))
         claimed = conn.execute("SELECT * FROM import_jobs WHERE id=?", (row['id'],)).fetchone()
         conn.commit()
         return _job_row(claimed)
 
 
-def update_import_job(job_id, *, status=None, progress=None, error=None, warnings=None, sources=None, finished=False):
+def update_import_job(job_id, *, status=None, progress=None, error=None, warnings=None, sources=None, research=None, finished=False):
+    # A cancelled/cancelling job is immutable for normal worker updates. This
+    # prevents a late HTTP/Ollama response from resurrecting the job.
+    with connect() as conn:
+        current = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if current is None:
+            return None
+        if current["status"] == "cancelled" or current["cancel_requested"]:
+            return _job_row(current)
+
     fields = ["updated_at=?"]
     values = [utcnow()]
     if status is not None:
@@ -514,6 +604,8 @@ def update_import_job(job_id, *, status=None, progress=None, error=None, warning
         fields.append("warnings_json=?"); values.append(json.dumps(list(warnings)[:20], ensure_ascii=False))
     if sources is not None:
         fields.append("sources_json=?"); values.append(json.dumps(list(sources)[:20], ensure_ascii=False))
+    if research is not None:
+        fields.append("research_json=?"); values.append(json.dumps(research if isinstance(research, dict) else {}, ensure_ascii=False))
     if finished:
         fields.append("finished_at=?"); values.append(utcnow())
     values.append(job_id)
@@ -543,8 +635,14 @@ def replace_import_suggestions(job_id, game_id, proposed_game, current_game):
             continue
         rows.append((str(uuid.uuid4()), job_id, game_id, field, json.dumps(proposed, ensure_ascii=False), "pending", now, now))
     with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        job = conn.execute("SELECT status,cancel_requested FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job or job["status"] == "cancelled" or job["cancel_requested"]:
+            conn.rollback()
+            return 0
         conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
         conn.executemany("INSERT INTO import_suggestions(id,job_id,game_id,field,value_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", rows)
+        conn.commit()
     return len(rows)
 
 

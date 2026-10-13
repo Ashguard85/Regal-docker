@@ -35,6 +35,42 @@ def validate_public_https_url(url):
     return parsed.geturl()
 
 
+
+def parse_allowed_origins(*raw_values):
+    """Parse exact HTTP(S) origins from comma/semicolon/newline separated config values.
+
+    Paths, credentials, query strings and fragments are rejected because CORS matches origins,
+    not page URLs. Invalid entries are returned separately so diagnostics can surface them.
+    """
+    import re
+    valid=[]
+    invalid=[]
+    seen=set()
+    for raw in raw_values:
+        for item in re.split(r"[,;\n]+", str(raw or "")):
+            value=item.strip().rstrip("/")
+            if not value:
+                continue
+            try:
+                parsed=urlparse(value)
+                if parsed.scheme not in {"http","https"} or not parsed.netloc or parsed.username or parsed.password:
+                    raise ValueError
+                if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+                    raise ValueError
+                host = (parsed.hostname or "").lower()
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                port = parsed.port
+                default_port = 443 if parsed.scheme == "https" else 80
+                normalized = f"{parsed.scheme}://{host}{f':{port}' if port and port != default_port else ''}"
+            except Exception:
+                invalid.append(value)
+                continue
+            if normalized not in seen:
+                seen.add(normalized)
+                valid.append(normalized)
+    return valid, invalid
+
 def fetch_public_text(url):
     session = requests.Session()
     session.trust_env = False

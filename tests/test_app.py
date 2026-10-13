@@ -5,11 +5,13 @@ import tempfile
 
 def load_app(tmp):
     os.environ["DATA_DIR"] = tmp
-    os.environ["PWA_ALLOWED_ORIGIN"] = "https://app.example.com"
+    os.environ.pop("PWA_ALLOWED_ORIGIN", None)
+    os.environ["PWA_ALLOWED_ORIGINS"] = "https://app.example.com,https://second.example.com"
     os.environ["AI_IMPORT_ENABLED"] = "false"
     os.environ["AI_PROVIDER"] = "none"
     os.environ["RULE_SEARCH_PROVIDER"] = "none"
     os.environ["WEB_FALLBACK_PROVIDER"] = "none"
+    os.environ["AUTO_SEARCH_PROVIDER"] = "none"
     import app.db as db
     import app.app as appmod
     importlib.reload(db)
@@ -22,8 +24,13 @@ def test_health_config_and_crud():
         app = load_app(tmp)
         c = app.test_client()
         assert c.get("/health").json == {"status": "ok"}
+        system = c.get("/api/system/status", headers={"Origin":"https://app.example.com"})
+        assert system.status_code == 200
+        assert system.json["api"]["status"] == "ok"
+        assert system.json["cors"]["allowed"] is True
+        assert system.json["search"]["status"] == "disabled"
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "8.5.2"
+        assert cfg["version"] == "8.7.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -55,6 +62,8 @@ def test_backup_import_and_cors():
         assert preview.status_code == 200
         preflight = c.options("/api/games", headers={"Origin":"https://app.example.com","Access-Control-Request-Method":"GET"})
         assert preflight.headers["Access-Control-Allow-Origin"] == "https://app.example.com"
+        second = c.options("/api/games", headers={"Origin":"https://second.example.com","Access-Control-Request-Method":"GET"})
+        assert second.headers["Access-Control-Allow-Origin"] == "https://second.example.com"
         denied = c.options("/api/games", headers={"Origin":"https://evil.example","Access-Control-Request-Method":"GET"})
         assert "Access-Control-Allow-Origin" not in denied.headers
 

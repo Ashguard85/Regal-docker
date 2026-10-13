@@ -1,9 +1,9 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.5.2",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.7.0",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
-let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="";
+let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
 const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
 const DEFAULT_TAG_CATALOG={
@@ -163,8 +163,14 @@ async function refreshConfig(){
 function latestJobForGame(gameId){
   return importJobs.find(j=>j.game_id===gameId)||null;
 }
+function secondsSince(value){
+  if(!value)return Number.POSITIVE_INFINITY;
+  const ms=Date.now()-Date.parse(value);
+  return Number.isFinite(ms)?Math.max(0,ms/1000):Number.POSITIVE_INFINITY;
+}
 function jobStatusMeta(job){
   if(!job)return null;
+  if(job.status==="running"&&job.cancel_requested)return {label:"Abbruch läuft",kind:"running"};
   const map={queued:["Wartet","queued"],running:["Wird ergänzt","running"],done:["Automatisch ergänzt","done"],review:["Vorschläge prüfen","review"],verified:["Geprüft","verified"],failed:["Importfehler","failed"],cancelled:["Abgebrochen","cancelled"]};
   const [label,kind]=map[job.status]||[job.status||"Status",""];
   return {label,kind};
@@ -186,12 +192,29 @@ function renderQueue(){
   $("workerBadge").classList.toggle("offline",workerState.status!=="online");
   const shown=importJobs.filter(j=>["running","queued","review","failed"].includes(j.status)).slice(0,30);
   $("queueList").innerHTML=shown.map(job=>{
-    const m=jobStatusMeta(job),review=job.status==="review",failed=job.status==="failed";
+    const m=jobStatusMeta(job),review=job.status==="review",failed=job.status==="failed",running=job.status==="running";
     const pending=(job.suggestions||[]).filter(x=>x.status==="pending").length;
-    const actions=review?`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">${pending?`${pending} Vorschläge prüfen`:"Prüfen"}</button></div>`:failed?`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`:"";
+    const staleFor=secondsSince(job.updated_at),cancelFor=secondsSince(job.cancel_requested_at);
+    const canForce=running&&(staleFor>=forceReleaseAfterSeconds||(job.cancel_requested&&cancelFor>=forceReleaseCancelGraceSeconds));
+    let actions="";
+    if(review)actions=`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">${pending?`${pending} Vorschläge prüfen`:"Prüfen"}</button></div>`;
+    else if(failed)actions=`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`;
+    else if(running){
+      const cancelButton=job.cancel_requested?`<span class="queue-cancel-note">Abbruch angefordert …</span>`:`<button class="button queue-action" type="button" data-cancel-running-job="${esc(job.id)}">Abbrechen</button>`;
+      const forceButton=canForce?`<button class="button queue-action danger" type="button" data-force-release-job="${esc(job.id)}">Hängenden Auftrag freigeben</button>`:"";
+      actions=`<div class="queue-actions">${cancelButton}${forceButton}</div>`;
+    }
     return `<div class="queue-row ${review?"review-row":""}"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.game_storage_location?` · 📍 ${esc(job.game_storage_location)}`:""}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${actions}</div>`;
   }).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
   $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
+  $("queueList").querySelectorAll("[data-cancel-running-job]").forEach(b=>b.addEventListener("click",async()=>{
+    if(!confirm("Laufenden Hintergrundauftrag abbrechen? Das Spiel selbst bleibt in deiner Sammlung."))return;
+    b.disabled=true;try{await provider.requestCancelImportJob(b.dataset.cancelRunningJob);await refreshQueue(true);}catch(err){showMessage("Abbrechen fehlgeschlagen",err.message);}finally{b.disabled=false;}
+  }));
+  $("queueList").querySelectorAll("[data-force-release-job]").forEach(b=>b.addEventListener("click",async()=>{
+    if(!confirm("Diesen hängenden Auftrag wirklich freigeben? Das Spiel bleibt erhalten; temporäre KI-Vorschläge dieses Auftrags werden verworfen."))return;
+    b.disabled=true;try{await provider.forceReleaseImportJob(b.dataset.forceReleaseJob);await refreshQueue(true);}catch(err){showMessage("Freigeben fehlgeschlagen",err.message);}finally{b.disabled=false;}
+  }));
   $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
 }
 function openQueueCleanup(){
@@ -220,6 +243,8 @@ async function refreshQueue(forceGames=false){
   try{
     const result=await provider.importQueue();
     importJobs=Array.isArray(result.jobs)?result.jobs:[];workerState=result.worker||{status:"offline",message:""};
+    forceReleaseAfterSeconds=Number(result.force_release_after_seconds)||600;
+    forceReleaseCancelGraceSeconds=Number(result.force_release_cancel_grace_seconds)||15;
     const fingerprint=importJobs.map(j=>`${j.id}:${j.status}:${j.updated_at}`).join("|");
     const changed=fingerprint!==queueFingerprint;queueFingerprint=fingerprint;
     renderQueue();renderGames();
@@ -375,13 +400,21 @@ function openGameDetail(gameId){
   const pendingSuggestions=(reviewJob?.suggestions||[]).filter(x=>x.status==="pending");
   const needsReview=reviewJob?.status==="review"&&pendingSuggestions.length>0;
   const sourceItems=(reviewJob?.sources||[]).map(url=>{try{const u=new URL(url);return `<li><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(u.hostname.replace(/^www\./,""))}</a></li>`;}catch{return "";}}).join("");
+  const research=reviewJob?.research||{};
+  const identity=research.identity||null;
+  const selectedResearch=(research.selected||[]).map(item=>{
+    const label=item.title||item.url||"Quelle";const score=Number(item.score);const scoreText=Number.isFinite(score)?` · ${score} Punkte`:"";
+    return `<li><strong>${esc(label)}</strong><small>${esc(item.trust||"")}${esc(scoreText)}</small>${safeHttpsUrl(item.url)?`<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Öffnen ↗</a>`:""}</li>`;
+  }).join("");
+  const ignoredResearch=(research.ignored||[]).map(item=>{const score=Number(item.score);const why=(item.reasons||[]).join(" · ");return `<li><span>${esc(item.title||item.url||"Treffer")}</span><small>${Number.isFinite(score)?`${score} Punkte · `:""}${esc(why)}</small></li>`;}).join("");
+  const researchPanel=(identity||selectedResearch||ignoredResearch)?`<div class="research-report"><div class="research-report-head"><strong>Quellenauswahl v8.7</strong><span>${esc(String(research.candidate_count||0))} Treffer geprüft</span></div>${identity?`<div class="identity-card"><span>Identifiziert über BoardGameGeek</span><strong>${esc(identity.title||identity.matched_name||"Brettspiel")}</strong><small>Übereinstimmung ${esc(String(identity.score||"?"))}% · BGG #${esc(String(identity.bgg_id||""))}</small></div>`:""}${selectedResearch?`<div class="research-list"><strong>Für Ollama ausgewählt</strong><ul>${selectedResearch}</ul></div>`:""}${ignoredResearch?`<details class="research-ignored"><summary>Verworfene Suchtreffer</summary><ul>${ignoredResearch}</ul></details>`:""}${research.bgg_error?`<p class="hint">BGG-Hinweis: ${esc(research.bgg_error)}</p>`:""}</div>`:"";
   const fmtSuggestion=(field,value)=>{if(value===null||value===undefined||value===""||(Array.isArray(value)&&!value.length))return "—";return valueText(field,value);};
   const suggestionRows=pendingSuggestions.map(item=>{
     const field=item.field,label=FIELD_LABELS[field]||field,current=game[field],proposed=item.value;
     const coverPreview=field==="cover_url"&&safeHttpsUrl(proposed)?`<img class="suggestion-cover" src="${esc(safeHttpsUrl(proposed))}" alt="KI-Covervorschlag" referrerpolicy="no-referrer">`:"";
     return `<div class="suggestion-row"><div class="suggestion-field"><strong>${esc(label)}</strong></div><div class="suggestion-values"><div><small>Aktuell</small><span>${esc(fmtSuggestion(field,current))}</span></div><div class="suggestion-proposed"><small>KI-Vorschlag</small>${coverPreview}<span>${esc(fmtSuggestion(field,proposed))}</span></div></div><div class="suggestion-actions"><button type="button" class="button primary" data-apply-suggestion="${esc(field)}">Übernehmen</button><button type="button" class="button subtle" data-reject-suggestion="${esc(field)}">Verwerfen</button></div></div>`;
   }).join("");
-  const warningPanel=needsReview?`<section class="detail-panel review-panel"><div class="suggestion-head"><div><h4>KI-Vorschläge prüfen</h4><p class="hint">Noch nichts davon hat deine freigegebenen Spieldaten überschrieben. Übernimm nur, was passt.</p></div><span class="proposal-count">${pendingSuggestions.length}</span></div>${suggestionRows}${reviewJob.warnings?.length?`<div class="warning-box"><strong>Hinweise der Recherche</strong><ul>${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}<div class="suggestion-footer"><button type="button" class="button subtle" data-reject-all-suggestions>Alle verwerfen</button></div></section>`:"";
+  const warningPanel=needsReview?`<section class="detail-panel review-panel"><div class="suggestion-head"><div><h4>KI-Vorschläge prüfen</h4><p class="hint">Noch nichts davon hat deine freigegebenen Spieldaten überschrieben. Übernimm nur, was passt.</p></div><span class="proposal-count">${pendingSuggestions.length}</span></div>${researchPanel}${suggestionRows}${reviewJob.warnings?.length?`<div class="warning-box"><strong>Hinweise der Recherche</strong><ul>${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}<div class="suggestion-footer"><button type="button" class="button subtle" data-reject-all-suggestions>Alle verwerfen</button></div></section>`:"";
   $("detailTitle").textContent=game.title||"Spiel";
   const tagPanel=(game.tags||[]).length?`<section class="detail-panel"><h4>Tags</h4><div class="detail-tag-groups">${detailTagGroups(game.tags)}</div></section>`:"";
   $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section>${tagPanel}<section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
@@ -597,8 +630,54 @@ async function serverToLocal(){
   try{const server=await makeServerProvider();const backup=await server.exportData();const local=new LocalProvider();const preview=await local.previewImport(backup);const strategy=await strategyDialog(preview,"Serverdaten lokal übernehmen? Vor einem Ersetzen empfiehlt sich ein Export des aktuellen lokalen Bestands.");if(!strategy)return;if(strategy==="replace"&&confirm("Vor dem Ersetzen jetzt ein lokales Sicherheitsbackup exportieren?")){const old=await local.exportData();await downloadJson(old,`brettspielregal-lokal-vor-restore-${new Date().toISOString().slice(0,10)}.json`);}await local.importData(backup,strategy);showMessage("Lokale Übernahme abgeschlossen",`${backup.data.games.length} Spiele und ${(backup.data.attachments||[]).length} Anhänge wurden lokal übernommen.`);if(currentMode==="local")await loadGames();}catch(err){showMessage("Übernahme fehlgeschlagen",err.message);}
 }
 
+function setDiagnostic(id,label,kind="neutral"){const el=$(id);if(!el)return;el.textContent=label;el.className=`diagnostic-state ${kind}`;}
+function resetDiagnostics(message="Nicht geprüft"){for(const id of ["diagBackend","diagApi","diagWorker","diagOllama","diagSearxng","diagCors"])setDiagnostic(id,message,"neutral");const hint=$("diagnosticHint");if(hint)hint.textContent="";}
+function diagnosticAiLabel(ai={}){
+  if(ai.status==="disabled")return ["deaktiviert","warn"];
+  if(ai.status==="error")return ["Fehler","error"];
+  if(ai.status==="model_missing")return [`Modell fehlt${ai.model?` · ${ai.model}`:""}`,"warn"];
+  if(ai.provider==="ollama"&&ai.vision_model&&ai.vision_model_available===false)return [`Text OK · Vision fehlt`,"warn"];
+  if(["ok","configured"].includes(ai.status))return [`OK${ai.model?` · ${ai.model}`:""}`,"ok"];
+  return [ai.status||"unbekannt","warn"];
+}
+async function runSystemDiagnostics({showDialog=false}={}){
+  const b=$("testConnectionButton");setBusy(b,true,"Prüfe …");
+  const origin=window.location.origin;const originEl=$("diagnosticOrigin");if(originEl)originEl.textContent=`Frontend: ${origin}`;
+  resetDiagnostics("Prüfe …");
+  try{
+    const srv=await makeServerProvider();
+    const result=await srv.systemStatus();
+    setDiagnostic("diagBackend","erreichbar","ok");
+    setDiagnostic("diagApi",result.api?.status==="ok"?`OK · v${result.version||config.version}`:"Fehler",result.api?.status==="ok"?"ok":"error");
+    const worker=result.worker||{};setDiagnostic("diagWorker",worker.status==="online"?"online":"offline",worker.status==="online"?"ok":"warn");
+    const [aiLabel,aiKind]=diagnosticAiLabel(result.ai||{});setDiagnostic("diagOllama",aiLabel,aiKind);
+    const search=result.search||{};setDiagnostic("diagSearxng",search.status==="ok"?"erreichbar":search.status==="disabled"?"deaktiviert":"Fehler",search.status==="ok"?"ok":search.status==="disabled"?"warn":"error");
+    const cors=result.cors||{};
+    if(cors.status==="not_required")setDiagnostic("diagCors","nicht nötig","ok");
+    else if(cors.allowed)setDiagnostic("diagCors","erlaubt","ok");
+    else setDiagnostic("diagCors","blockiert","error");
+    const hints=[];
+    if(worker.status!=="online")hints.push("Der Worker meldet keinen aktuellen Heartbeat.");
+    if(result.ai?.error)hints.push(result.ai.error);
+    if(search.error)hints.push(search.error);
+    if(cors.invalid_entries?.length)hints.push(`Ungültige CORS-Einträge: ${cors.invalid_entries.join(", ")}`);
+    if(cors.status==="not_required")hints.push("Frontend und API verwenden dieselbe Origin; CORS ist hier nicht erforderlich.");
+    else if(cors.allowed)hints.push(`${origin} ist vom Backend als externe Frontend-Origin erlaubt.`);
+    $("diagnosticHint").textContent=hints.join(" ");
+    diagnosticsChecked=true;
+    if(showDialog)showMessage("Systemstatus",`Backend und API sind erreichbar. Worker: ${worker.status==="online"?"online":"offline"}.`);
+    return result;
+  }catch(err){
+    setDiagnostic("diagBackend","nicht erreichbar","error");setDiagnostic("diagApi","nicht erreichbar","error");setDiagnostic("diagWorker","–","neutral");setDiagnostic("diagOllama","–","neutral");setDiagnostic("diagSearxng","–","neutral");setDiagnostic("diagCors","prüfen","warn");
+    $("diagnosticHint").textContent=`${err.message} Falls du GitHub Pages verwendest, muss ${origin} exakt in PWA_ALLOWED_ORIGINS stehen.`;
+    if(showDialog)showMessage("Verbindung fehlgeschlagen",err.message);
+    return null;
+  }finally{setBusy(b,false);}
+}
+
 async function loadSetup(){
   serverConfig=await loadServerConnection();$("backendUrl").value=serverConfig.url||config.defaultApiUrl||"";$("cfClientId").value=serverConfig.clientId||"";$("cfClientSecret").value="";$("cfClientSecret").placeholder=serverConfig.clientSecret?"Gespeichert – zum Ersetzen neu eingeben":"Neu setzen oder leer lassen";
+  if($("diagnosticOrigin"))$("diagnosticOrigin").textContent=`Frontend: ${window.location.origin}`;
   $("versionLabel").textContent=config.version;$("buildTargetLabel").textContent=isDocker()?"Docker Fullstack Build":"GitHub Pages PWA Build";
   $("serverConfigForm").classList.toggle("hidden",isDocker());
   $("researchSettingsDetails").classList.toggle("hidden",currentMode!=="server");
@@ -612,7 +691,8 @@ async function loadSetup(){
       $("researchPromptInput").value=r.research_prompt||"";
       $("researchSettingsStatus").textContent="";
     }catch(err){$("researchSettingsStatus").textContent=err.message;}
-  }
+    if(!diagnosticsChecked)runSystemDiagnostics().catch(()=>{});
+  }else if(!isDocker()){resetDiagnostics("Server-Modus nötig");}
 }
 async function saveResearchSettings(event){
   event.preventDefault();const submit=$("researchSettingsForm").querySelector('button[type="submit"]');setBusy(submit,true,"Speichere …");
@@ -644,9 +724,9 @@ async function cleanupExistingTags(){
   }catch(err){$("cleanupTagsStatus").textContent=err.message;}finally{setBusy(b,false);}
 }
 
-async function saveConnection(event){event.preventDefault();const url=normalizeUrl($("backendUrl").value);if(url&&!/^https:\/\//i.test(url)){showMessage("Ungültige Backend-URL","Im externen Pages-Frontend ist nur eine öffentliche HTTPS-Backend-URL vorgesehen.");return;}await saveServerConnection({url,clientId:$("cfClientId").value.trim(),clientSecret:$("cfClientSecret").value});showMessage("Gespeichert","Die Server-Konfiguration wurde nur auf diesem Gerät gespeichert.");await loadSetup();if(currentMode==="server"){try{provider=await makeServerProvider();await refreshConfig();await loadGames();}catch{}}}
+async function saveConnection(event){event.preventDefault();const url=normalizeUrl($("backendUrl").value);if(url&&!/^https:\/\//i.test(url)){showMessage("Ungültige Backend-URL","Im externen Pages-Frontend ist nur eine öffentliche HTTPS-Backend-URL vorgesehen.");return;}await saveServerConnection({url,clientId:$("cfClientId").value.trim(),clientSecret:$("cfClientSecret").value});diagnosticsChecked=false;if(currentMode==="server"){try{provider=await makeServerProvider();}catch{}}showMessage("Gespeichert","Die Server-Konfiguration wurde nur auf diesem Gerät gespeichert.");await loadSetup();if(currentMode==="server"){try{await refreshConfig();await loadGames();}catch{}}}
 async function clearSecrets(){if(!confirm("Gespeicherte Cloudflare-Zugangsdaten auf diesem Gerät löschen?"))return;await wipeServerSecrets();await loadSetup();showMessage("Zugangsdaten gelöscht","Client ID und Client Secret wurden aus IndexedDB entfernt.");}
-async function testConnection(){const b=$("testConnectionButton");setBusy(b,true,"Teste …");try{const srv=await makeServerProvider();const h=await srv.health();showMessage("Verbindung funktioniert",h.status==="ok"?"Backend ist erreichbar und meldet Status ok.":"Backend ist erreichbar.");}catch(err){showMessage("Verbindung fehlgeschlagen",err.message);}finally{setBusy(b,false);}}
+async function testConnection(){await runSystemDiagnostics({showDialog:true});}
 
 async function testAi(){
   if(currentMode!=="server"){showMessage("Nur im Server-Modus","Im lokalen Pages-Modus wird bewusst keine KI angesprochen.");return;}

@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.5.2
+# Portainer Stack – Brettspielregal v8.7.0
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -17,13 +17,14 @@ In Portainer unter **Stack → Environment variables** müssen gesetzt sein:
 ```text
 SECRET_KEY      = dein bisheriger Brettspielregal-Schlüssel
 SEARXNG_SECRET  = ein langer zufälliger Schlüssel
+BGG_API_TOKEN   = dein BoardGameGeek Application Token (für strukturierte BGG-Daten)
 ```
 
-Den vorhandenen `SECRET_KEY` nicht ändern.
+Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-API inzwischen Registrierung und einen Bearer/Application-Token. Wenn `BGG_API_TOKEN` leer bleibt, funktioniert Brettspielregal weiter; nur die strukturierte BGG-Identifikation wird übersprungen und die Recherche nutzt Herstellerseiten/SearXNG.
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.5.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -31,9 +32,9 @@ x-app-build: &app-build
 
 x-app-environment: &app-environment
   APP_TITLE: "Brettspielregal"
-  APP_URL: "http://192.168.1.127:8190"
+  APP_URL: "${APP_URL:-http://192.168.1.127:8190}"
   SECRET_KEY: "${SECRET_KEY}"
-  PWA_ALLOWED_ORIGIN: "http://192.168.1.127:8190"
+  PWA_ALLOWED_ORIGINS: "${PWA_ALLOWED_ORIGINS:-https://ashguard85.github.io,http://192.168.1.127:8190}"
   BACKUP_KEEP: "50"
 
   AI_IMPORT_ENABLED: "true"
@@ -50,11 +51,17 @@ x-app-environment: &app-environment
   AUTO_ENRICH_ENABLED: "true"
   AUTO_ENRICH_NEW_GAMES: "true"
   AUTO_ENRICH_POLL_SECONDS: "5"
+  AUTO_ENRICH_JOB_TIMEOUT_SECONDS: "900"
+  AUTO_ENRICH_STUCK_MINUTES: "10"
   AUTO_SEARCH_PROVIDER: "searxng"
   SEARXNG_BASE_URL: "http://searxng:8080"
   AUTO_SEARCH_RESULTS: "8"
-  AUTO_FETCH_PAGES: "4"
-  AUTO_RESEARCH_MAX_CHARS: "30000"
+  BGG_ENABLED: "true"
+  BGG_API_TOKEN: "${BGG_API_TOKEN:-}"
+  BGG_TIMEOUT_SECONDS: "15"
+  BGG_MIN_INTERVAL_SECONDS: "5"
+  AUTO_FETCH_PAGES: "3"
+  AUTO_RESEARCH_MAX_CHARS: "24000"
 
 services:
   app:
@@ -149,6 +156,23 @@ Danach **Update the stack**.
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
+## v8.7 – bessere Webrecherche
+
+- `BGG_ENABLED=true` aktiviert die strukturierte BoardGameGeek-Referenz.
+- SearXNG dient nur noch zur URL-Findung. Such-Snippets werden nicht als Fakten an Qwen weitergereicht.
+- `AUTO_FETCH_PAGES=3` begrenzt die normalen Webseiten; zusammen mit BGG erhält Ollama maximal vier ausgewählte Quellen.
+- `AUTO_RESEARCH_MAX_CHARS=24000` hält das Recherchebundle kompakt.
+- Bei BGG-Ausfall arbeitet die Suche mit Hersteller-/Verlagsseiten weiter; der Job scheitert nicht allein deshalb.
+
+## v8.5.3 – hängende Jobs
+
+Bei einem laufenden Auftrag erscheint im Import-Tab **Abbrechen**. Der Worker führt jeden Job in einem eigenen Unterprozess aus und kann dadurch auch einen blockierten Web-/Ollama-Aufruf beenden.
+
+Falls ein Auftrag länger als `AUTO_ENRICH_STUCK_MINUTES` keinen Fortschritt zeigt oder eine Abbruchanforderung nicht sauber abgeschlossen wird, bietet die Oberfläche **Hängenden Auftrag freigeben** an. Das Spiel bleibt erhalten; nur der Queue-Auftrag und seine temporären KI-Vorschläge werden verworfen.
+
+`AUTO_ENRICH_JOB_TIMEOUT_SECONDS` ist ein zusätzliches Sicherheitsnetz für die maximale Gesamtlaufzeit eines einzelnen Jobs. Standard sind 900 Sekunden.
+
+
 ## v8.5 Bedienung
 
 - **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht. Der **Lagerort** ist sichtbar und durchsuchbar.
@@ -170,4 +194,19 @@ Dort gibt es:
 
 Alle frei formulierten KI-Werte sollen auf Deutsch gespeichert werden. BoardGameGeek darf als englische Referenz dienen, wird aber vor der Übernahme durch Qwen auf deutsche Beschreibungen/Tags normalisiert. Technische Werte wie Ollama-URL, Modelle und Timeouts bleiben in Portainer.
 
-Wenn bereits ein eigener Prompt aus v8.2/v8.3 gespeichert ist, wird er nicht überschrieben. Für den neuen v8.5-Standard im Setup **Auf Standard zurücksetzen** wählen. Siehe auch `OLLAMA_PROMPT_V8.5.md`.
+Ein bereits gespeicherter eigener Prompt wird nicht überschrieben. v8.7 hängt die neue verbindliche Quellenregel automatisch an alte Prompts an. Für den vollständigen neuen Standard kannst du optional **Auf Standard zurücksetzen** wählen. Siehe `OLLAMA_PROMPT_V8.7.md`.
+
+
+## GitHub Pages und mehrere erlaubte Origins
+
+Für v8.7 wird die Mehrfachvariable verwendet:
+
+```yaml
+PWA_ALLOWED_ORIGINS: "https://ashguard85.github.io,http://192.168.1.127:8190"
+```
+
+Bei einer eigenen Pages-Domain trägst du deren **Origin** zusätzlich ein, ohne Pfad, z. B. `https://spiele.example.ch`. Ein GitHub-Pages-Projektpfad wie `/brettspielregal/` gehört nicht in die Origin.
+
+Die lokale Docker-Seite auf `http://192.168.1.127:8190` greift same-origin auf die API zu und braucht CORS technisch nicht; der Eintrag schadet jedoch nicht und erleichtert spätere getrennte lokale Frontends.
+
+Für GitHub Pages muss die Backend-URL eine öffentliche HTTPS-Adresse des Reverse Proxys sein. Ollama und SearXNG bleiben intern und werden nicht öffentlich freigegeben.
