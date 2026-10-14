@@ -1,9 +1,17 @@
-# Brettspielregal – Docker Fullstack v8.8.1
+# Brettspielregal – Docker Fullstack v8.8.2
 
+
+## Neu in v8.8.2
+
+- Eigene Cover werden jetzt auch in der **Sammlungsübersicht** auf iPhone/Safari zuverlässig geladen.
+- Sichtbare Cover werden sofort hydratisiert; `IntersectionObserver` bleibt nur als Lazy-Loading-Unterstützung für weiter unten liegende Karten aktiv.
+- Scroll-/Resize-Fallback für Safari/PWA, falls der Observer nach einem Tabwechsel verzögert reagiert.
+- Die 8-Sekunden-Queue-Abfrage rendert die Sammlung nicht mehr unnötig neu und verwirft dadurch keine geladenen Blob-Cover mehr.
+- Beim Wechsel zurück auf **Sammlung** werden die Karten im sichtbaren Zustand neu aufgebaut.
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
 
-## Neu in v8.8.1
+## Neu in v8.8.2
 
 ### Eigene Bilder zuverlässig als Cover
 
@@ -148,7 +156,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.1.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.2.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

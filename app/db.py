@@ -184,7 +184,7 @@ def init_db():
 
         applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
         if 10 not in applied:
-            # v8.8.1: ältere Datensätze konnten das erste Bild nur implizit als
+            # v8.8.2: ältere Datensätze konnten das erste Bild nur implizit als
             # Cover verwenden. Die Zuordnung wird einmalig explizit gespeichert,
             # damit Frontend, Backup und spätere Bearbeitung denselben Zustand sehen.
             conn.execute("""

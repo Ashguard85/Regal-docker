@@ -1,11 +1,11 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.1",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.2",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
-const coverResources={list:{urls:[],observer:null},detail:{urls:[],observer:null}};
+const coverResources={list:{urls:[],observer:null,cleanup:null},detail:{urls:[],observer:null,cleanup:null}};
 const DEFAULT_TAG_CATALOG={
   "Spielart":["Familienspiel","Kinderspiel","Kennerspiel","Expertenspiel","Partyspiel","Solospiel","Zweipersonenspiel","Kooperativ","Kompetitiv"],
   "Mechanik":["Deckbau","Kartenauswahl","Arbeitereinsatz","Plättchenlegen","Sets sammeln","Risikoabwägung","Handkartenmanagement","Gebietskontrolle","Kombinationsaufbau","Würfeln & Eintragen","Deduktion","Versteigerung","Stichspiel","Geschicklichkeit","Gedächtnis","Rätsel","Kampagne","Routenbau","Mehrheiten","Würfelspiel","Kartenspiel"],
@@ -247,7 +247,10 @@ async function refreshQueue(forceGames=false){
     forceReleaseCancelGraceSeconds=Number(result.force_release_cancel_grace_seconds)||15;
     const fingerprint=importJobs.map(j=>`${j.id}:${j.status}:${j.updated_at}`).join("|");
     const changed=fingerprint!==queueFingerprint;queueFingerprint=fingerprint;
-    renderQueue();renderGames();
+    renderQueue();
+    // Die Queue hat in der Sammlungsansicht keine Status-Badges mehr. Ein
+    // komplettes Karten-Rendern bei jedem 8-Sekunden-Poll würde Blob-Cover
+    // unnötig verwerfen und neu laden. Nur bei echten Spieldatenänderungen neu laden.
     if(forceGames||changed&&importJobs.some(j=>["done","review"].includes(j.status)))await loadGames();
   }catch(err){workerState={status:"offline",message:err.message};renderQueue();}
 }
@@ -273,7 +276,9 @@ function coverHtml(game,classes="game-cover",attachment=null){
   return `<div class="${classes} game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
 }
 function releaseCovers(scope){
-  const r=coverResources[scope];if(r.observer){r.observer.disconnect();r.observer=null;}
+  const r=coverResources[scope];
+  if(r.observer){r.observer.disconnect();r.observer=null;}
+  if(r.cleanup){try{r.cleanup();}catch{}r.cleanup=null;}
   for(const url of r.urls)URL.revokeObjectURL(url);r.urls=[];
 }
 function hydrateCovers(scope){
@@ -317,11 +322,41 @@ function hydrateCovers(scope){
     for(const node of nodes)hydrate(node);
     return;
   }
+  const isNearViewport=node=>{
+    if(!node.isConnected||!root.contains(node))return false;
+    const rect=node.getBoundingClientRect();
+    const h=window.innerHeight||document.documentElement.clientHeight||0;
+    return rect.bottom>=-320&&rect.top<=h+320;
+  };
   if("IntersectionObserver" in window){
     resource.observer=new IntersectionObserver(entries=>{
       for(const entry of entries)if(entry.isIntersecting){resource.observer?.unobserve(entry.target);hydrate(entry.target);}
-    },{rootMargin:"240px"});
+    },{rootMargin:"320px"});
     for(const node of nodes)resource.observer.observe(node);
+
+    // Safari/iOS kann IntersectionObserver nach PWA-Tabwechseln oder bei zuvor
+    // versteckten Ansichten verzögert auslösen. Sichtbare Cover deshalb sofort
+    // prüfen und bei Scroll/Resize nochmals anstoßen. So bleibt die Sammlung
+    // lazy, aber sichtbare eigene Cover erscheinen zuverlässig.
+    let raf=0;
+    const hydrateVisible=()=>{
+      raf=0;
+      for(const node of nodes){
+        if(node.dataset.loading)continue;
+        if(isNearViewport(node)){resource.observer?.unobserve(node);hydrate(node);}
+      }
+    };
+    const schedule=()=>{if(!raf)raf=requestAnimationFrame(hydrateVisible);};
+    window.addEventListener("scroll",schedule,{passive:true,capture:true});
+    window.addEventListener("resize",schedule,{passive:true});
+    const timer=setTimeout(schedule,180);
+    resource.cleanup=()=>{
+      clearTimeout(timer);
+      if(raf)cancelAnimationFrame(raf);
+      window.removeEventListener("scroll",schedule,true);
+      window.removeEventListener("resize",schedule);
+    };
+    schedule();
   }else for(const node of nodes)hydrate(node);
 }
 function renderGames(){
@@ -803,7 +838,12 @@ async function switchMode(mode){
   try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();showMessage("Betriebsmodus gewechselt",`Aktiv ist jetzt: ${modeLabel()}. Es wurden keine Daten zwischen Lokal und Server übertragen.`);}catch(err){showMessage("Server-Modus noch nicht bereit",err.message);showView("setup");}
   await loadSetup();
 }
-function showView(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));$("mainContent").focus();}
+function showView(view){
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`view${view[0].toUpperCase()+view.slice(1)}`));
+  document.querySelectorAll(".nav-button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
+  if(view==="collection")requestAnimationFrame(()=>renderGames());
+  $("mainContent").focus();
+}
 
 function bindEvents(){
   $("addGameButton").addEventListener("click",()=>openGame());$("emptyAddButton").addEventListener("click",()=>openGame());$("quickCaptureForm").addEventListener("submit",submitQuickCapture);$("quickCaptureUseAi")?.addEventListener("change",updateResearchControls);$("searchInput").addEventListener("input",renderGames);
