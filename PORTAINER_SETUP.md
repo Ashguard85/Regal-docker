@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.8.2
+# Portainer Stack – Brettspielregal v8.8.3
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -29,7 +29,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.8.2.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.8.3.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -162,9 +162,9 @@ Danach **Update the stack**.
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
 
-## v8.8.2 – Cover-/Anhang-Hotfix
+## v8.8.3 – Cover-/Anhang-Hotfix
 
-Für v8.8.2 sind **keine neuen Environment-Variablen** nötig. Eigene Bilder werden in der Detailansicht sofort geladen, das erste hochgeladene Bild wird explizit als Cover gespeichert und ältere implizite Cover-Zuordnungen werden beim Datenbankstart einmalig repariert.
+Für v8.8.3 sind **keine neuen Environment-Variablen** nötig. Eigene Bilder werden in der Detailansicht sofort geladen, das erste hochgeladene Bild wird explizit als Cover gespeichert und ältere implizite Cover-Zuordnungen werden beim Datenbankstart einmalig repariert.
 
 ## v8.8.0 – automatische Quellenklassifizierung
 
@@ -243,6 +243,11 @@ Für GitHub Pages muss die Backend-URL eine öffentliche HTTPS-Adresse des Rever
 Für v8.8 sind **keine neuen Environment-Variablen** nötig. Die Feldbelege werden aus den bereits geladenen Quellen berechnet und in SQLite gespeichert. Bestehende offene Vorschläge aus v8.7.x erhalten nicht rückwirkend belastbare Belege; dafür das Spiel einmal **Neu recherchieren**.
 
 
-## v8.8.2 – Cover in der Sammlung
+## v8.8.3 – Cover in der Sammlung
 
 Keine neuen Environment-Variablen nötig. Der Fix betrifft ausschließlich das Frontend-Laden eigener Cover in der Sammlungsübersicht und die Vermeidung unnötiger Re-Renders beim Queue-Polling.
+
+
+## v8.8.3 – Eigene Cover im Regal
+
+Für v8.8.3 sind **keine neuen Environment-Variablen** nötig. Im lokalen Docker-/Same-Origin-Betrieb werden eigene Cover direkt über den bestehenden Attachment-Endpunkt als Bild geladen. Dadurch entfällt in der Sammlungsübersicht die bisherige Blob-/IntersectionObserver-Abhängigkeit.

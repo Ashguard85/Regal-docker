@@ -135,7 +135,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.8.2",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.8.3",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -167,6 +167,13 @@ export class ServerProvider{
     return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments`,{method:"POST",body:form,timeoutMs:120000});
   }
   getAttachmentBlob(gameId,attachmentId){return this.blobRequest(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`);}
+  attachmentImageUrl(gameId,attachmentId){
+    // Native <img>-URLs sind im Docker-/öffentlichen Serverbetrieb robuster und
+    // vermeiden die Blob-/IntersectionObserver-Nachladung. Wenn Cloudflare
+    // Service-Token-Header nötig sind, bleibt der bestehende Blob-Fallback aktiv.
+    if(this.creds?.clientId||this.creds?.clientSecret)return "";
+    return this.url(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`);
+  }
   removeAttachment(gameId,attachmentId){return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments/${encodeURIComponent(attachmentId)}`,{method:"DELETE"});}
   list(){return this.request("/api/games");}
   get(id){return this.request(`/api/games/${encodeURIComponent(id)}`);}

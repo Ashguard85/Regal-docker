@@ -1,26 +1,15 @@
-# Brettspielregal – Docker Fullstack v8.8.2
+# Brettspielregal – Docker Fullstack v8.8.3
 
-
-## Neu in v8.8.2
-
-- Eigene Cover werden jetzt auch in der **Sammlungsübersicht** auf iPhone/Safari zuverlässig geladen.
-- Sichtbare Cover werden sofort hydratisiert; `IntersectionObserver` bleibt nur als Lazy-Loading-Unterstützung für weiter unten liegende Karten aktiv.
-- Scroll-/Resize-Fallback für Safari/PWA, falls der Observer nach einem Tabwechsel verzögert reagiert.
-- Die 8-Sekunden-Queue-Abfrage rendert die Sammlung nicht mehr unnötig neu und verwirft dadurch keine geladenen Blob-Cover mehr.
-- Beim Wechsel zurück auf **Sammlung** werden die Karten im sichtbaren Zustand neu aufgebaut.
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
+## Neu in v8.8.3 – Cover im Regal ohne Blob-Hydrierung
 
-## Neu in v8.8.2
-
-### Eigene Bilder zuverlässig als Cover
-
-- Eigene Bilder in der Spiel-Detailansicht werden sofort geladen; der `IntersectionObserver` bleibt nur noch für die Sammlung zuständig.
-- Der Detaildialog wird zuerst geöffnet und die Bild-Hydrierung erst danach gestartet. Das verhindert den bisherigen Safari-/Dialog-Fall, bei dem nur der Buchstaben-Platzhalter sichtbar blieb.
-- Das erste hochgeladene Bild wird jetzt **explizit** als `cover_attachment_id` gespeichert. Eine Datenbankmigration repariert ältere Spiele, bei denen das erste Bild bisher nur implizit als Cover verwendet wurde.
-- Nach dem Upload wird das Spiel neu geladen und das Cover sofort aktualisiert.
-- Bildantworten werden `inline` ausgeliefert; der separate Download-Button funktioniert weiterhin über Blob-Download.
-- Die Vorschau prüft den MIME-Typ. Bei nicht darstellbaren Formaten (z. B. HEIC/HEIF in einem Browser ohne Decoder) erscheint eine verständliche Meldung statt eines stillen Platzhalters.
+- Im Docker-/Same-Origin-Betrieb werden eigene Cover jetzt direkt über den bestehenden Attachment-Endpunkt als normales `<img>` geladen.
+- Das Regal ist damit nicht mehr vom `IntersectionObserver` oder einem nachträglichen Blob-Austausch abhängig.
+- Für GitHub Pages bzw. Verbindungen mit Cloudflare-Service-Token bleibt der Blob-Fallback erhalten, weil dort zusätzliche Request-Header nötig sein können.
+- Eigene Cover verwenden weiterhin exakt den ausgewählten `cover_attachment_id`; das erste Bild wird seit v8.8.1 automatisch explizit als Cover gespeichert.
+- Fehlerhafte direkte Bildaufrufe fallen sichtbar auf einen Cover-Platzhalter zurück.
+- Es sind keine neuen Environment-Variablen nötig.
 
 ## Neu in v8.8.0
 
@@ -156,7 +145,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.2.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.3.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

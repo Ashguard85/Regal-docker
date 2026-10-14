@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.2",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.3",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -270,10 +270,26 @@ function imageAttachment(game){
 function coverHtml(game,classes="game-cover",attachment=null){
   const selected=attachment||imageAttachment(game);
   const initial=(game.title||"B").trim().slice(0,1).toLocaleUpperCase("de");
-  if(selected)return `<div class="${classes} game-cover-placeholder" data-attachment-id="${esc(selected.id)}" data-game-id="${esc(game.id)}" aria-label="Lade Bild"><span>${esc(initial)}</span></div>`;
+  if(selected){
+    const nativeUrl=provider?.attachmentImageUrl?.(game.id,selected.id)||"";
+    if(nativeUrl)return `<img class="${classes}" src="${esc(nativeUrl)}" alt="Cover von ${esc(game.title)}" decoding="async" referrerpolicy="no-referrer" data-native-cover data-cover-initial="${esc(initial)}">`;
+    return `<div class="${classes} game-cover-placeholder" data-attachment-id="${esc(selected.id)}" data-game-id="${esc(game.id)}" aria-label="Lade Bild"><span>${esc(initial)}</span></div>`;
+  }
   const url=safeHttpsUrl(game.cover_url);
   if(url)return `<img class="${classes}" src="${esc(url)}" alt="Cover von ${esc(game.title)}" loading="lazy" referrerpolicy="no-referrer">`;
   return `<div class="${classes} game-cover-placeholder" aria-hidden="true"><span>${esc(initial)}</span></div>`;
+}
+function installNativeCoverFallback(root){
+  root.querySelectorAll("img[data-native-cover]").forEach(img=>{
+    img.addEventListener("error",()=>{
+      if(!img.isConnected)return;
+      const ph=document.createElement("div");
+      ph.className=`${img.className} game-cover-placeholder cover-load-error`.trim();
+      ph.title="Eigenes Cover konnte nicht geladen werden.";
+      ph.innerHTML=`<span>${esc(img.dataset.coverInitial||"!")}</span>`;
+      img.replaceWith(ph);
+    },{once:true});
+  });
 }
 function releaseCovers(scope){
   const r=coverResources[scope];
@@ -388,7 +404,7 @@ function renderGames(){
     card.querySelector("button").addEventListener("click",()=>openGameDetail(g.id));list.append(card);
   }
   if(games.length&&filtered.length===0)list.innerHTML='<div class="empty-state"><strong>Nichts gefunden</strong><p>Versuche einen anderen Suchbegriff.</p></div>';
-  updateViewButtons();renderTagFilters();hydrateCovers("list");
+  updateViewButtons();renderTagFilters();installNativeCoverFallback(list);hydrateCovers("list");
 }
 
 function clearGameForm(){
@@ -494,6 +510,7 @@ function openGameDetail(gameId){
   $("detailTitle").textContent=game.title||"Spiel";
   const tagPanel=(game.tags||[]).length?`<section class="detail-panel"><h4>Tags</h4><div class="detail-tag-groups">${detailTagGroups(game.tags)}</div></section>`:"";
   $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section>${tagPanel}<section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
+  installNativeCoverFallback($("detailBody"));
   $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
   $("detailApproveButton").classList.toggle("hidden",!needsReview);
   $("detailApproveButton").onclick=needsReview?async()=>{const b=$("detailApproveButton");setBusy(b,true,"Übernehme …");try{await provider.applyImportSuggestions(reviewJob.id,null);await loadGames();await refreshQueue();openGameDetail(game.id);showMessage("Vorschläge übernommen","Alle noch offenen KI-Vorschläge wurden in die freigegebenen Spieldaten übernommen.");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
