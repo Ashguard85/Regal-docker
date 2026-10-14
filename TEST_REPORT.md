@@ -1,9 +1,9 @@
-# Test Report – v8.7.0
+# Test Report – v8.7.1
 
 ## Ausgeführt
 
-- **51** Kern-/DB-/Worker-/KI-/Recherche-/Tag-/CORS-Helfertests bestanden.
-- Neue Tests für BGG-XML-Parsing, BGG-Identifikation, Kandidaten-Scoring, Snippet-Ausschluss und persistente Rechercheberichte.
+- **54** Kern-/DB-/Worker-/KI-/Recherche-/Tag-/CORS-Helfertests bestanden.
+- Neue Tests für BGG-XML-Parsing, BGG-Identifikation, Kandidaten-Scoring, Snippet-Ausschluss, persistente Rechercheberichte sowie v8.7.1-Fallback bei blockierter Primärquelle und BGG-Webfallback ohne API-Token.
 - Python-Compile-Check für alle App-Module.
 - JavaScript-Syntaxprüfung für Shared- und Docker-Frontend.
 - DOM-ID-Abgleich zwischen `index.html` und `app.js`.

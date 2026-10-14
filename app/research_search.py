@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.0"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.1"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -74,7 +74,7 @@ def searxng_search(query, limit=None):
         response = requests.get(
             f"{base}/search",
             params={"q": query, "format": "json", "language": "de", "safesearch": "1"},
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.0"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.1"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -188,7 +188,7 @@ def _search_queries(query, current_game, settings):
     if ean:
         queries += [f'"{ean}" Brettspiel', f'"{ean}" Spiel']
     if expected:
-        queries += [f'"{expected}" Brettspiel', f'"{expected}" Spiel Verlag']
+        queries += [f'"{expected}" Brettspiel', f'"{expected}" Spiel Verlag', f'"{expected}" board game']
         # One focused BGG URL-discovery query. Structured BGG lookup runs independently.
         queries.append(f'"{expected}" site:boardgamegeek.com/boardgame')
         primary = (settings.get("primary_domains") or [])[:7]
@@ -226,32 +226,57 @@ def search(query, current_game=None):
     return sorted(dedup.values(), key=lambda x: (x.get("score", -999), -len(x.get("url", ""))), reverse=True)[:30]
 
 
-def _select_candidates(candidates, max_pages):
-    """Choose only a few strong and diverse pages. SearXNG snippets never become evidence."""
+def _select_candidates(candidates, max_pages, *, allow_bgg_html=False):
+    """Build a robust fetch queue from strong candidates.
+
+    v8.7.1 deliberately returns more than ``max_pages`` candidates so a blocked
+    publisher/shop page does not abort the whole research job. Only successful
+    fetches count against ``max_pages`` later in ``research_game``.
+    """
     selected, seen_hosts = [], set()
-    # Primary sources first, then strong general sources. BGG HTML is redundant when structured BGG succeeded.
-    ordered = sorted(candidates, key=lambda x: (x.get("trust") == "primary", x.get("score", -999)), reverse=True)
+    ordered = sorted(
+        candidates,
+        key=lambda x: (x.get("trust") == "primary", x.get("trust") == "reference", x.get("score", -999)),
+        reverse=True,
+    )
+    # Try several alternatives. This is intentionally larger than max_pages,
+    # because some otherwise excellent product pages reject automated fetches.
+    fetch_budget = min(max(len(candidates), 1), max(6, max_pages * 4))
     for row in ordered:
         trust, score = row.get("trust"), int(row.get("score") or 0)
-        if trust == "low" or "boardgamegeek.com/boardgame/" in str(row.get("url", "")).lower():
+        url = str(row.get("url", ""))
+        is_bgg_html = "boardgamegeek.com/boardgame/" in url.lower()
+        if trust == "low":
             continue
-        host = (urlparse(row["url"]).hostname or "").lower()
-        threshold = 12 if trust == "primary" else 22
+        if is_bgg_html and not allow_bgg_html:
+            continue
+        host = (urlparse(url).hostname or "").lower()
+        threshold = 12 if trust == "primary" else 18 if trust == "reference" else 22
         if score < threshold:
             continue
+        # Prefer diversity first. A second URL from a host may still be useful,
+        # but only after other hosts have had a chance.
         if host in seen_hosts:
             continue
-        selected.append(row); seen_hosts.add(host)
-        if len(selected) >= max_pages:
+        selected.append(row)
+        seen_hosts.add(host)
+        if len(selected) >= fetch_budget:
             break
+
+    # If strict thresholds produced nothing, keep one plausible non-low result.
     if not selected:
-        fallback = next((r for r in candidates if r.get("trust") != "low" and int(r.get("score") or 0) >= 5), None)
+        fallback = next((
+            r for r in ordered
+            if r.get("trust") != "low"
+            and (allow_bgg_html or "boardgamegeek.com/boardgame/" not in str(r.get("url", "")).lower())
+            and int(r.get("score") or 0) >= 5
+        ), None)
         if fallback:
             selected.append(fallback)
-    selected_urls = {r["url"] for r in selected}
-    ignored = [r for r in candidates if r.get("url") not in selected_urls][:10]
-    return selected, ignored
 
+    selected_urls = {r["url"] for r in selected}
+    ignored = [r for r in candidates if r.get("url") not in selected_urls][:12]
+    return selected, ignored
 
 def _compact_page_bundle(result, fallback, structured, text, warnings):
     # Search snippets are intentionally excluded. Ollama receives only data fetched from the selected URL.
@@ -282,22 +307,31 @@ def research_game(query, current_game=None):
     candidates = search(query, current_game)
     max_pages = _int_env("AUTO_FETCH_PAGES", 3, 1, 4)
     max_total_chars = _int_env("AUTO_RESEARCH_MAX_CHARS", 24000, 8000, 50000)
-    selected, ignored = _select_candidates(candidates, max_pages)
 
+    # Identify with structured BGG first. When that is unavailable (for example
+    # no API token), a public BGG game page is allowed back into the normal web
+    # fetch queue as a fallback reference.
     bgg_identity, bgg_error = None, ""
     try:
         bgg_identity = identify_bgg(query, current_game)
     except BGGError as exc:
         bgg_error = str(exc)
 
+    selected, ignored = _select_candidates(
+        candidates, max_pages, allow_bgg_html=not bool(bgg_identity)
+    )
     bundles, sources, extracted_titles = [], [], []
+    fetch_failures = []
 
     fetched = 0
     for result in selected:
+        if fetched >= max_pages:
+            break
         try:
             fallback, text, structured, warnings = extract_page(result["url"])
         except Exception as exc:
             result["fetch_error"] = str(exc)[:180]
+            fetch_failures.append({"url": result["url"], "error": str(exc)[:180]})
             continue
         fetched += 1
         sources.append(result["url"])
@@ -327,7 +361,15 @@ def research_game(query, current_game=None):
         })
 
     if not bundles:
-        raise ResearchSearchError("Es wurden keine ausreichend verlässlichen Quellen gefunden oder abgerufen.")
+        if not candidates:
+            detail = "SearXNG lieferte keine passenden HTTPS-Treffer."
+        elif fetch_failures:
+            detail = f"{len(fetch_failures)} passende Quelle(n) wurden gefunden, konnten aber nicht abgerufen werden."
+        else:
+            detail = "Die gefundenen Treffer lagen unter der Vertrauensschwelle."
+        if bgg_error:
+            detail += " BGG: " + bgg_error
+        raise ResearchSearchError("Keine verlässliche Quelle konnte verwendet werden. " + detail)
 
     evidence_obj = {
         "pipeline": "v8.7-preselected-sources",
@@ -343,11 +385,14 @@ def research_game(query, current_game=None):
             "url": bgg_identity["data"]["url"], "trust": "reference", "score": bgg_identity["score"],
             "reasons": ["strukturierte BGG-Daten", f"Titelmatch: {bgg_identity['matched_name']}"]
         })
-    selected_urls = {r.get("url") for r in selected}
+    successful_urls = set(sources)
     for row in candidates:
-        if row.get("url") in selected_urls:
-            selected_report.append({k: row.get(k) for k in ("title", "url", "trust", "score", "reasons")})
-    ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons")} for row in ignored]
+        if row.get("url") in successful_urls:
+            item = {k: row.get(k) for k in ("title", "url", "trust", "score", "reasons")}
+            if row.get("fetch_error"):
+                item["fetch_error"] = row.get("fetch_error")
+            selected_report.append(item)
+    ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons", "fetch_error")} for row in candidates if row.get("url") not in successful_urls][:10]
     report = {
         "pipeline": "v8.7",
         "identity": ({
@@ -360,6 +405,7 @@ def research_game(query, current_game=None):
         "ignored": ignored_report[:8],
         "candidate_count": len(candidates),
         "pages_fetched": fetched,
+        "fetch_failures": len(fetch_failures),
     }
     return {
         "query": query,

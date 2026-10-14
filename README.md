@@ -1,9 +1,19 @@
-# Brettspielregal – Docker Fullstack v8.7.0
+# Brettspielregal – Docker Fullstack v8.7.1
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
 
-## Neu in v8.7.0
+## Neu in v8.7.1
+
+### Hotfix: robuste Quellen-Fallbacks bei kurzen/mehrdeutigen Titeln
+
+Bei Titeln wie **Scythe** konnte v8.7 abbrechen, obwohl SearXNG brauchbare Treffer gefunden hatte: Die vorselektierten Seiten wurden nur einmal versucht und die öffentliche BoardGameGeek-Spielseite war pauschal ausgeschlossen.
+
+- Wenn die strukturierte BGG-API nicht verfügbar ist (z. B. ohne `BGG_API_TOKEN`), darf die öffentliche BGG-Spielseite jetzt als normale Referenzquelle einspringen.
+- Der Worker baut eine grössere Fetch-Warteschlange auf und probiert weitere hochwertige Treffer, bis `AUTO_FETCH_PAGES` Seiten **erfolgreich** abgerufen wurden. Ein HTTP-403 einer guten Quelle beendet die Recherche nicht mehr.
+- Zusätzlich wird eine englische `"<Titel>" board game`-Discovery-Suche verwendet; das verbessert kurze internationale Titel.
+- Fehlermeldungen unterscheiden nun zwischen **keinen Treffern**, **zu schwachen Treffern** und **gefundenen, aber nicht abrufbaren Seiten** und hängen den BGG-Hinweis an.
+- Der Recherchebericht zeigt die tatsächlich erfolgreich verwendeten Quellen; fehlgeschlagene Abrufe erscheinen bei den verworfenen Treffern.
 
 ### Webrecherche grundlegend neu aufgebaut
 
@@ -138,7 +148,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.1.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 
