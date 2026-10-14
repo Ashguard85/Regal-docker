@@ -35,10 +35,14 @@ def test_upload_gallery_cover_pdf_download_delete():
         pdf = upload(c, gid, PDF, 'Spielregeln.pdf')
         assert image.status_code == 201 and image.json['kind'] == 'image'
         assert pdf.status_code == 201 and pdf.json['kind'] == 'rules'
-        assert len(c.get('/api/games').json[0]['attachments']) == 2
+        listed = c.get('/api/games').json[0]
+        assert len(listed['attachments']) == 2
         img_id = image.json['id']
-        assert c.get(f'/api/games/{gid}/attachments/{img_id}').data == PNG
-        assert c.get(f'/api/games/{gid}/attachments/{img_id}').headers['Cache-Control'] == 'private, no-store'
+        assert listed['cover_attachment_id'] == img_id
+        image_response = c.get(f'/api/games/{gid}/attachments/{img_id}')
+        assert image_response.data == PNG
+        assert image_response.headers['Cache-Control'] == 'private, no-store'
+        assert image_response.headers.get('Content-Disposition', '').startswith('inline')
         assert c.put(f'/api/games/{gid}', json={'title': 'Azul', 'cover_attachment_id': img_id}).status_code == 200
         # Updating a game must NOT cascade-delete its attachments.
         assert len(c.get(f'/api/games/{gid}').json['attachments']) == 2
@@ -57,7 +61,7 @@ def test_backup_roundtrip_and_legacy_import():
         assert upload(c, gid, PNG, 'cover.png').status_code == 201
         assert upload(c, gid, PDF, 'regeln.pdf').status_code == 201
         backup = c.get('/api/export').json
-        assert backup['version'] == 3
+        assert backup['version'] == 4
         assert len(backup['data']['attachments']) == 2
         assert PNG in [base64.b64decode(a['content_base64']) for a in backup['data']['attachments']]
         assert c.post('/api/import/preview', json={'backup': backup}).status_code == 200

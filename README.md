@@ -1,7 +1,18 @@
-# Brettspielregal – Docker Fullstack v8.8.0
+# Brettspielregal – Docker Fullstack v8.8.1
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
+
+## Neu in v8.8.1
+
+### Eigene Bilder zuverlässig als Cover
+
+- Eigene Bilder in der Spiel-Detailansicht werden sofort geladen; der `IntersectionObserver` bleibt nur noch für die Sammlung zuständig.
+- Der Detaildialog wird zuerst geöffnet und die Bild-Hydrierung erst danach gestartet. Das verhindert den bisherigen Safari-/Dialog-Fall, bei dem nur der Buchstaben-Platzhalter sichtbar blieb.
+- Das erste hochgeladene Bild wird jetzt **explizit** als `cover_attachment_id` gespeichert. Eine Datenbankmigration repariert ältere Spiele, bei denen das erste Bild bisher nur implizit als Cover verwendet wurde.
+- Nach dem Upload wird das Spiel neu geladen und das Cover sofort aktualisiert.
+- Bildantworten werden `inline` ausgeliefert; der separate Download-Button funktioniert weiterhin über Blob-Download.
+- Die Vorschau prüft den MIME-Typ. Bei nicht darstellbaren Formaten (z. B. HEIC/HEIF in einem Browser ohne Decoder) erscheint eine verständliche Meldung statt eines stillen Platzhalters.
 
 ## Neu in v8.8.0
 
@@ -137,7 +148,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.0.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.1.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

@@ -41,7 +41,7 @@ def test_v1_sqlite_migrates_without_data_loss():
         assert game["cover_url"] == ""
         assert game["award"] == ""
         with db.connect() as c:
-            assert {r[0] for r in c.execute("SELECT version FROM schema_migrations")} == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+            assert {r[0] for r in c.execute("SELECT version FROM schema_migrations")} == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 
 
 def test_v1_backup_is_accepted_and_upgraded_on_export():

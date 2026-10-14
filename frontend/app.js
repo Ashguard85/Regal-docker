@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.8.1",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -279,20 +279,44 @@ function releaseCovers(scope){
 function hydrateCovers(scope){
   const root=scope==="list"?$("gameList"):$("detailBody");
   const resource=coverResources[scope];
+  const fail=(node,message)=>{
+    if(!node.isConnected||!root.contains(node))return;
+    node.removeAttribute("data-loading");
+    node.classList.add("cover-load-error");
+    node.title=message;
+    node.innerHTML=`<span aria-hidden="true">!</span><small>${esc(message)}</small>`;
+  };
   const hydrate=async node=>{
     if(node.dataset.loading)return;node.dataset.loading="1";
     const gameId=node.dataset.gameId,attId=node.dataset.attachmentId,providerAtStart=provider;
     try{
       const blob=await providerAtStart.getAttachmentBlob(gameId,attId);
       if(provider!==providerAtStart||!node.isConnected||!root.contains(node))return;
+      if(blob.type&&!blob.type.toLowerCase().startsWith("image/"))throw new Error("Der gespeicherte Anhang ist kein Bild.");
       const url=URL.createObjectURL(blob),img=document.createElement("img");
-      resource.urls.push(url);img.className=node.className.replace("game-cover-placeholder","");img.alt="Gespeichertes Bild";img.loading="lazy";
+      resource.urls.push(url);
+      img.className=node.className.replace("game-cover-placeholder","").replace("cover-load-error","").trim();
+      img.alt="Gespeichertes Bild";
+      img.loading=scope==="detail"?"eager":"lazy";
+      img.decoding="async";
       img.onload=()=>{if(node.isConnected&&root.contains(node))node.replaceWith(img);};
-      img.onerror=()=>{if(node.isConnected)node.title="Keine Bildvorschau in diesem Browser – die Datei kann trotzdem geöffnet werden.";};
+      img.onerror=()=>{
+        const mime=(blob.type||"").toLowerCase();
+        const message=(mime.includes("heic")||mime.includes("heif"))
+          ?"Bild gespeichert – HEIC/HEIF-Vorschau wird von diesem Browser nicht unterstützt."
+          :"Bild gespeichert, aber die Vorschau konnte nicht dargestellt werden.";
+        fail(node,message);
+      };
       img.src=url;
-    }catch{node.removeAttribute("data-loading");node.title="Bild konnte nicht geladen werden";}
+    }catch(err){fail(node,err?.message||"Bild konnte nicht geladen werden.");}
   };
   const nodes=[...root.querySelectorAll("[data-attachment-id]")];
+  // In der Detailansicht sind die Bilder zentraler Inhalt und werden sofort
+  // geladen. Lazy Loading per IntersectionObserver bleibt nur für die Sammlung.
+  if(scope==="detail"){
+    for(const node of nodes)hydrate(node);
+    return;
+  }
   if("IntersectionObserver" in window){
     resource.observer=new IntersectionObserver(entries=>{
       for(const entry of entries)if(entry.isIntersecting){resource.observer?.unobserve(entry.target);hydrate(entry.target);}
@@ -460,8 +484,11 @@ function openGameDetail(gameId){
     try{await provider.removeAttachment(game.id,b.dataset.deleteAttachment);await loadGames();openGameDetail(game.id);}
     catch(err){$("detailAttachmentStatus").textContent=err.message;}
   }));
-  hydrateCovers("detail");
-  if(!$("gameDetailDialog").open)$("gameDetailDialog").showModal();
+  const detailDialog=$("gameDetailDialog");
+  if(!detailDialog.open)detailDialog.showModal();
+  // Erst nach dem Öffnen laden. Safari/iOS erkennt Bilder in einem geschlossenen
+  // <dialog> sonst nicht zuverlässig als sichtbar.
+  requestAnimationFrame(()=>hydrateCovers("detail"));
 }
 async function downloadStoredAttachment(game,att){
   if(!att)return;
@@ -479,10 +506,17 @@ async function openStoredAttachment(game,att){
 }
 async function addDetailFiles(files){
   if(!files.length||!activeDetailGameId)return;
-  const gameId=activeDetailGameId;$("detailAttachmentStatus").textContent="Dateien werden gespeichert …";
+  const gameId=activeDetailGameId;
+  const before=games.find(g=>g.id===gameId);
+  const hadExplicitCover=!!before?.cover_attachment_id;
+  $("detailAttachmentStatus").textContent="Dateien werden gespeichert …";
   try{
     for(const file of files)await provider.addAttachment(gameId,file);
-    await loadGames();openGameDetail(gameId);$("detailAttachmentStatus").textContent=`${files.length} Datei(en) gespeichert.`;
+    await loadGames();
+    const after=games.find(g=>g.id===gameId);
+    const autoCover=!hadExplicitCover&&!!after?.cover_attachment_id;
+    openGameDetail(gameId);
+    $("detailAttachmentStatus").textContent=`${files.length} Datei(en) gespeichert.${autoCover?" Das erste Bild wurde als Cover gesetzt.":""}`;
   }catch(err){await loadGames();openGameDetail(gameId);$("detailAttachmentStatus").textContent=`Nicht alle Dateien gespeichert: ${err.message}`;}
   $("detailAttachmentInput").value="";
 }

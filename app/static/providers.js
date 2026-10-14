@@ -89,7 +89,17 @@ export class LocalProvider{
       if(!grouped.has(a.game_id))grouped.set(a.game_id,[]);
       grouped.get(a.game_id).push(metadata(a));
     }
-    for(const game of games)game.attachments=(grouped.get(game.id)||[]).sort((a,b)=>a.created_at.localeCompare(b.created_at));
+    for(const game of games){
+      game.attachments=(grouped.get(game.id)||[]).sort((a,b)=>a.created_at.localeCompare(b.created_at));
+      if(!game.cover_attachment_id){
+        const firstImage=game.attachments.find(a=>a.kind==="image");
+        if(firstImage){
+          game.cover_attachment_id=firstImage.id;
+          game.updated_at=nowIso();
+          await putGame(game);
+        }
+      }
+    }
     return games;
   }
   async get(id){const g=(await this.list()).find(g=>g.id===id);if(!g)throw new Error("Spiel wurde nicht gefunden.");return g;}
@@ -98,11 +108,18 @@ export class LocalProvider{
   async remove(id){await deleteGame(id);}
   async listAttachments(gameId){return (await getAllAttachments()).filter(a=>a.game_id===gameId).map(metadata);}
   async addAttachment(gameId,file){
-    if(!(await getGame(gameId)))throw new Error("Spiel wurde nicht gefunden.");
+    const game=await getGame(gameId);
+    if(!game)throw new Error("Spiel wurde nicht gefunden.");
     if((await this.listAttachments(gameId)).length>=MAX_ATTACHMENTS_PER_GAME)throw new Error("Maximal 15 Anhänge pro Spiel.");
     const mime=await validateFile(file);
     const row={id:id(),game_id:gameId,filename:safeFilename(file.name,mime),mime_type:mime,kind:mime==="application/pdf"?"rules":"image",size:file.size,created_at:nowIso(),blob:new Blob([file],{type:mime})};
-    await putAttachment(row);return metadata(row);
+    await putAttachment(row);
+    if(row.kind==="image"&&!game.cover_attachment_id){
+      game.cover_attachment_id=row.id;
+      game.updated_at=nowIso();
+      await putGame(game);
+    }
+    return metadata(row);
   }
   async getAttachmentBlob(gameId,attachmentId){const row=await getAttachment(attachmentId);if(!row||row.game_id!==gameId)throw new Error("Anhang wurde nicht gefunden.");return row.blob;}
   async removeAttachment(gameId,attachmentId){return deleteAttachment(gameId,attachmentId);}
@@ -118,7 +135,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.8.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.8.1",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 

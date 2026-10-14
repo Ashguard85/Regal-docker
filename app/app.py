@@ -91,7 +91,7 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="8.8.0",
+            version="8.8.1",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
@@ -108,7 +108,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.8.0",
+            version="8.8.1",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -393,7 +393,7 @@ def create_app(test_config=None):
             content = attachments.read_file(attachment_id)
         except ValueError as exc:
             return jsonify(error=str(exc)), 404
-        response = send_file(BytesIO(content), mimetype=meta["mime_type"], as_attachment=True,
+        response = send_file(BytesIO(content), mimetype=meta["mime_type"], as_attachment=False,
                              download_name=meta["filename"], max_age=0)
         response.headers["Cache-Control"] = "private, no-store"
         return response

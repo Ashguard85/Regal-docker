@@ -17,4 +17,4 @@ def test_research_report_persists_on_job():
         loaded = db.get_import_job(job["id"])
         assert loaded["research"]["identity"]["bgg_id"] == 199792
         assert loaded["sources"] == ["https://boardgamegeek.com/boardgame/199792"]
-        assert db.SCHEMA_VERSION == 8
+        assert db.SCHEMA_VERSION == 10

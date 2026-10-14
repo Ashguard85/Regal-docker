@@ -643,3 +643,18 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 .safe-apply-bar>div{display:grid;gap:2px}.safe-apply-bar strong{font-size:.82rem;color:#285d43}.safe-apply-bar small{color:#637169;font-size:.73rem;line-height:1.35}
 .suggestion-field{display:grid;gap:6px}.suggestion-evidence-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px 9px}.evidence-badge{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;border:1px solid #dde1dd;background:#f6f7f5;color:#59635d;font-size:.68rem;font-weight:780;white-space:nowrap}.evidence-primary{border-color:#c8d9e8;background:#edf4fa;color:#2f5f83}.evidence-strong{border-color:#c9dfd0;background:#e9f4ed;color:#2f6749}.evidence-single{border-color:#d9ddda;background:#f5f6f4;color:#5b645f}.evidence-derived{border-color:#e7d8aa;background:#fff7dc;color:#7a6220}.evidence-conflict{border-color:#e8c5ba;background:#fff0eb;color:#8a3f2f}.evidence-summary{color:#6f766f;font-size:.72rem;line-height:1.35}.suggestion-evidence-details{flex-basis:100%;font-size:.74rem}.suggestion-evidence-details summary{cursor:pointer;color:#52665b}.evidence-group{margin-top:7px;padding:8px 9px;border-radius:10px;background:rgba(255,255,255,.72);border:1px solid rgba(80,100,88,.10)}.evidence-group>strong{display:block;margin-bottom:5px;font-size:.7rem;color:#667069}.evidence-group ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}.evidence-group li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 9px;align-items:center}.evidence-group li span{min-width:0;overflow-wrap:anywhere}.evidence-group li small{color:#6f766f;overflow-wrap:anywhere}.evidence-group li a{grid-column:1/-1;font-size:.7rem}.evidence-conflicts{border-color:#ead2ca;background:#fff8f5}
 @media(max-width:560px){.safe-apply-bar{align-items:stretch;flex-direction:column}.safe-apply-bar .button{width:100%}.evidence-group li{grid-template-columns:1fr}.evidence-group li a{grid-column:1}}
+
+/* v8.8.1: sichtbare Fehler statt stiller Cover-Platzhalter */
+.game-cover-placeholder.cover-load-error {
+  gap: .35rem;
+  padding: .55rem;
+  text-align: center;
+  align-content: center;
+  background: #eef1eb;
+  color: var(--muted);
+  font-size: 1rem;
+}
+.game-cover-placeholder.cover-load-error::before { display: none; }
+.game-cover-placeholder.cover-load-error span { color: #8a5b34; text-shadow: none; font-size: 1.25rem; }
+.game-cover-placeholder.cover-load-error small { position: relative; z-index: 1; display: block; max-width: 18ch; font-size: .72rem; line-height: 1.25; font-weight: 650; }
+.shelf-cover.cover-load-error small { display: none; }

@@ -7,7 +7,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 BACKUP_VERSION = 4
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3, 4}
 
@@ -182,6 +182,28 @@ def init_db():
                 conn.execute("ALTER TABLE import_suggestions ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'")
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (9, utcnow()))
 
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 10 not in applied:
+            # v8.8.1: ältere Datensätze konnten das erste Bild nur implizit als
+            # Cover verwenden. Die Zuordnung wird einmalig explizit gespeichert,
+            # damit Frontend, Backup und spätere Bearbeitung denselben Zustand sehen.
+            conn.execute("""
+                UPDATE games
+                SET cover_attachment_id = COALESCE((
+                    SELECT a.id
+                    FROM attachments a
+                    WHERE a.game_id = games.id AND a.kind = 'image'
+                    ORDER BY a.created_at, a.id
+                    LIMIT 1
+                ), '')
+                WHERE COALESCE(cover_attachment_id, '') = ''
+                  AND EXISTS (
+                    SELECT 1 FROM attachments a2
+                    WHERE a2.game_id = games.id AND a2.kind = 'image'
+                  )
+            """)
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (10, utcnow()))
+
 
 def get_app_settings(keys=None):
     with connect() as conn:
@@ -307,6 +329,14 @@ def add_attachment(record):
         if count >= 15:
             raise ValueError("Maximal 15 Anhänge pro Spiel erlaubt.")
         conn.execute("INSERT INTO attachments(id,game_id,filename,mime_type,kind,size,created_at) VALUES (:id,:game_id,:filename,:mime_type,:kind,:size,:created_at)", record)
+        # Das erste eigene Bild wird explizit zum Cover. Bisher war es nur ein
+        # Frontend-Fallback und cover_attachment_id blieb leer.
+        if record.get("kind") == "image":
+            conn.execute("""
+                UPDATE games
+                SET cover_attachment_id=?, updated_at=?
+                WHERE id=? AND COALESCE(cover_attachment_id, '')=''
+            """, (record["id"], utcnow(), record["game_id"]))
     return record
 
 

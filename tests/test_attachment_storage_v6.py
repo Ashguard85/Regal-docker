@@ -46,7 +46,7 @@ def test_migration_from_v2_preserves_games_and_adds_attachment_table():
         assert db.get_game("old")["cover_attachment_id"] == ""
         with db.connect() as conn:
             assert conn.execute("SELECT count(*) FROM attachments").fetchone()[0] == 0
-            assert {r[0] for r in conn.execute("SELECT version FROM schema_migrations")} == {1,2,3,4,5,6,7,8,9}
+            assert {r[0] for r in conn.execute("SELECT version FROM schema_migrations")} == {1,2,3,4,5,6,7,8,9,10}
 
 
 def test_attachment_backup_and_merge_preserve_files():
@@ -93,3 +93,20 @@ def test_rejects_invalid_backup_before_changing_db():
         assert att.detect_mime(HEIC)=="image/heic"
         with pytest.raises(ValueError):att.check_bytes(b"bad")
         with pytest.raises(ValueError):att.check_bytes(PNG+b"x"*(10*1024*1024))
+
+
+def test_first_image_becomes_explicit_cover_and_migration_repairs_legacy_cover():
+    with tempfile.TemporaryDirectory() as tmp:
+        db, att = setup(tmp)
+        db.save_game(db.normalize_game({"id":"g1","title":"Castel Combo"}))
+        image = att.make_record("g1", "IMG_4896.png", PNG)
+        att.write_file(image, PNG)
+        db.add_attachment(image)
+        assert db.get_game("g1")["cover_attachment_id"] == image["id"]
+
+        # Simuliere den alten v8.8-Zustand: Bild vorhanden, Cover-ID leer.
+        with db.connect() as conn:
+            conn.execute("UPDATE games SET cover_attachment_id='' WHERE id='g1'")
+            conn.execute("DELETE FROM schema_migrations WHERE version=10")
+        db.init_db()
+        assert db.get_game("g1")["cover_attachment_id"] == image["id"]

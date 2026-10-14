@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.8.0
+# Portainer Stack – Brettspielregal v8.8.1
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -29,7 +29,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.8.0.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.8.1.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -160,6 +160,11 @@ Danach **Update the stack**.
 - `searxng` – interne Websuche ohne veröffentlichten Port
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
+
+
+## v8.8.1 – Cover-/Anhang-Hotfix
+
+Für v8.8.1 sind **keine neuen Environment-Variablen** nötig. Eigene Bilder werden in der Detailansicht sofort geladen, das erste hochgeladene Bild wird explizit als Cover gespeichert und ältere implizite Cover-Zuordnungen werden beim Datenbankstart einmalig repariert.
 
 ## v8.8.0 – automatische Quellenklassifizierung
 
