@@ -1,8 +1,14 @@
-# Test Report – v8.7.2
+# Test Report – v8.7.3
 
 ## Ergebnis
 
-- **59 Kern-/DB-/Worker-/KI-/BGG-/Recherchetests bestanden.**
-- Neue v8.7.2-Tests: mehrsprachiger Fallback für `Scythe`, Fallback auch bei schwachen deutschen Treffern, BGG-only-Weiterlauf bei SearXNG-Ausfall, detaillierte Engine-Diagnose und sichere HTTP→HTTPS-Normalisierung von Suchtreffern.
-- Python-Compile, JavaScript-Syntax, DOM-ID-Prüfung, CSS/Manifest, Docker-/Pages-Parität und ZIP-Integrität werden zusätzlich geprüft.
-- **8 Flask-basierte API-/Attachment-Integrationstests sind in dieser Build-Umgebung nicht ausführbar**, weil Flask hier nicht installiert ist. Das ist eine Umgebungsgrenze, kein bestandener Test.
+- **61 nicht-Flask-basierte Tests bestanden.**
+- Darunter neue v8.7.3-Tests für automatische Verlags-/Herstellererkennung nach Seitenabruf und Post-Fetch-Ranking (Feuerland vor Wikipedia).
+- Der Research-Worker lädt bei Bedarf zusätzliche Kandidaten und reicht anschließend nur die inhaltlich besten Quellen an Ollama weiter.
+- Python-Compile für alle App-Module: bestanden.
+- JavaScript-Syntax (`app.js`, `providers.js`, `service-worker.js`): bestanden.
+- Docker-/Pages-Frontend-Parität, DOM-IDs, CSS/Manifest und ZIP-Integrität werden beim Packaging geprüft.
+
+## Umgebungshinweis
+
+Die 8 Flask-basierten API-/Attachment-Integrationstests können in dieser Build-Umgebung nicht ausgeführt werden, weil das Python-Paket `flask` hier nicht installiert ist. Beim vollständigen `pytest`-Lauf scheitern genau diese 8 Tests bereits beim Import mit `ModuleNotFoundError: flask`; die übrigen 61 Tests sind grün.

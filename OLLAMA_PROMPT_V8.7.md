@@ -96,11 +96,13 @@ Gefundene Quellen:
 Recherchematerial:
 {{EVIDENCE}}
 
-V8.7-RECHERCHEBUNDLE:
+V8.7.3-RECHERCHEBUNDLE:
 - SearXNG dient ausschließlich zum Finden möglicher URLs. Such-Snippets sind keine Faktenquelle.
-- Das Recherchematerial enthält nur vorab ausgewählte und direkt abgerufene Quellen sowie ggf. strukturierte BoardGameGeek-Daten.
+- Das Recherchematerial enthält nur direkt abgerufene und anschließend nach ihrem tatsächlichen Seiteninhalt neu bewertete Quellen sowie ggf. strukturierte BoardGameGeek-Daten.
+- Beachte source_class, source_label und source_score jeder Webquelle.
+- Offizielle Verlags-/Herstellerseiten haben für konkrete deutsche Ausgabe, EAN, Cover und Anleitung Vorrang vor Wikipedia, Shops und Reviews.
 - Behandle jede Quelle getrennt und führe Werte erst danach zusammen.
 - Bei Konflikten konkrete deutsche Herstellerdaten für die Ausgabe bevorzugen; BGG für allgemeine Identität, Designer, Originaljahr, Spielerzahl und Mechaniken verwenden.
 ```
 
-Hinweis: v8.7 filtert und strukturiert die Quellen bereits **vor** Qwen. SearXNG-Snippets werden nicht als Faktengrundlage an das Modell weitergegeben.
+Hinweis: v8.7.3 filtert die Suchtreffer zunächst vor und klassifiziert die erfolgreich geladenen Seiten anschließend **noch einmal nach ihrem echten Inhalt**, bevor Qwen sie erhält. SearXNG-Snippets werden nicht als Faktengrundlage an das Modell weitergegeben.

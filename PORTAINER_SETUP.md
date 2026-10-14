@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.7.2
+# Portainer Stack – Brettspielregal v8.7.3
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -24,7 +24,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.2.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.3.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -155,6 +155,14 @@ Danach **Update the stack**.
 - `searxng` – interne Websuche ohne veröffentlichten Port
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
+
+## v8.7.3 – automatische Quellenklassifizierung
+
+Nach dem erfolgreichen Abruf bewertet der Worker den **echten Seiteninhalt** ein zweites Mal. Dadurch kann eine bisher unbekannte Verlagsdomain automatisch als offizielle Quelle erkannt werden, wenn Domain/Verlagsidentität und Seiteninhalt zusammenpassen.
+
+Beispiel `Scythe`: `feuerland-spiele.de` wird durch die erkannte Feuerland-Verlagsidentität, konkrete Spieldaten und Regel-Downloads als offizielle Verlagsseite hochgestuft; Wikipedia bleibt eine allgemeine Referenzquelle. Reviews/Tests und reine Shops werden nach dem Abruf erneut herabgestuft.
+
+Der Worker darf dafür bis zu einige zusätzliche Kandidaten abrufen, gibt aber weiterhin nur die besten `AUTO_FETCH_PAGES` Quellen an Ollama weiter. Es ist keine neue Portainer-Variable nötig.
 
 ## v8.7.2 – robustere Webrecherche
 

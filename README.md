@@ -1,7 +1,16 @@
-# Brettspielregal – Docker Fullstack v8.7.2
+# Brettspielregal – Docker Fullstack v8.7.3
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
+
+## Neu in v8.7.3
+
+- **Zweite Quellenbewertung nach dem Abruf:** nicht nur Suchtreffer/Domain, sondern der tatsächlich geladene Seiteninhalt entscheidet.
+- **Offizielle Verlags-/Herstellerseiten werden automatisch erkannt**, auch wenn ihre Domain nicht manuell als Primärquelle hinterlegt ist. Dazu werden u. a. Verlags-/Herstelleridentität, Domain, strukturierte Produktdaten und konkrete Spieldaten ausgewertet.
+- **Wikipedia und ähnliche allgemeine Referenzen bleiben nützlich, werden aber gedeckelt** und sollen nicht mehr vor einer erkannten offiziellen Produktseite liegen.
+- **Reviews und Shops werden nach dem Abruf erneut herabgestuft.**
+- Der Worker lädt einige zusätzliche Kandidaten, bewertet sie erst danach und gibt nur die besten `AUTO_FETCH_PAGES` Quellen an Ollama weiter.
+- In **Vorschläge prüfen → Quellenauswahl v8.7.3** siehst du die erkannte Quellenklasse, die neue Bewertung und die wichtigsten Gründe.
 
 ## Neu in v8.7.2
 
@@ -115,7 +124,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.2.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.3.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

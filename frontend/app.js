@@ -1,7 +1,7 @@
 import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.7.2",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"8.7.3",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -403,11 +403,12 @@ function openGameDetail(gameId){
   const research=reviewJob?.research||{};
   const identity=research.identity||null;
   const selectedResearch=(research.selected||[]).map(item=>{
-    const label=item.title||item.url||"Quelle";const score=Number(item.score);const scoreText=Number.isFinite(score)?` · ${score} Punkte`:"";
-    return `<li><strong>${esc(label)}</strong><small>${esc(item.trust||"")}${esc(scoreText)}</small>${safeHttpsUrl(item.url)?`<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Öffnen ↗</a>`:""}</li>`;
+    const label=item.title||item.url||"Quelle";const score=Number(item.post_fetch_score??item.score);const scoreText=Number.isFinite(score)?` · ${score} Punkte`:"";const sourceLabel=item.source_label||({primary:"Primärquelle",reference:"Referenzquelle",low:"niedrige Priorität"}[item.trust]||"Webquelle");
+    const why=(item.post_fetch_reasons||[]).slice(0,3).join(" · ");
+    return `<li><strong>${esc(label)}</strong><small>${esc(sourceLabel)}${esc(scoreText)}${why?` · ${esc(why)}`:""}</small>${safeHttpsUrl(item.url)?`<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Öffnen ↗</a>`:""}</li>`;
   }).join("");
-  const ignoredResearch=(research.ignored||[]).map(item=>{const score=Number(item.score);const why=(item.reasons||[]).join(" · ");return `<li><span>${esc(item.title||item.url||"Treffer")}</span><small>${Number.isFinite(score)?`${score} Punkte · `:""}${esc(why)}</small></li>`;}).join("");
-  const researchPanel=(identity||selectedResearch||ignoredResearch)?`<div class="research-report"><div class="research-report-head"><strong>Quellenauswahl v8.7</strong><span>${esc(String(research.candidate_count||0))} Treffer geprüft</span></div>${identity?`<div class="identity-card"><span>Identifiziert über BoardGameGeek</span><strong>${esc(identity.title||identity.matched_name||"Brettspiel")}</strong><small>Übereinstimmung ${esc(String(identity.score||"?"))}% · BGG #${esc(String(identity.bgg_id||""))}</small></div>`:""}${selectedResearch?`<div class="research-list"><strong>Für Ollama ausgewählt</strong><ul>${selectedResearch}</ul></div>`:""}${ignoredResearch?`<details class="research-ignored"><summary>Verworfene Suchtreffer</summary><ul>${ignoredResearch}</ul></details>`:""}${research.bgg_error?`<p class="hint">BGG-Hinweis: ${esc(research.bgg_error)}</p>`:""}</div>`:"";
+  const ignoredResearch=(research.ignored||[]).map(item=>{const score=Number(item.post_fetch_score??item.score);const sourceLabel=item.source_label?`${item.source_label} · `:"";const why=(item.post_fetch_reasons?.length?item.post_fetch_reasons:item.reasons||[]).join(" · ");return `<li><span>${esc(item.title||item.url||"Treffer")}</span><small>${esc(sourceLabel)}${Number.isFinite(score)?`${score} Punkte · `:""}${esc(why)}</small></li>`;}).join("");
+  const researchPanel=(identity||selectedResearch||ignoredResearch)?`<div class="research-report"><div class="research-report-head"><strong>Quellenauswahl v8.7.3</strong><span>${esc(String(research.candidate_count||0))} Treffer geprüft</span></div>${identity?`<div class="identity-card"><span>Identifiziert über BoardGameGeek</span><strong>${esc(identity.title||identity.matched_name||"Brettspiel")}</strong><small>Übereinstimmung ${esc(String(identity.score||"?"))}% · BGG #${esc(String(identity.bgg_id||""))}</small></div>`:""}${selectedResearch?`<div class="research-list"><strong>Für Ollama ausgewählt</strong><ul>${selectedResearch}</ul></div>`:""}${ignoredResearch?`<details class="research-ignored"><summary>Verworfene Suchtreffer</summary><ul>${ignoredResearch}</ul></details>`:""}${research.bgg_error?`<p class="hint">BGG-Hinweis: ${esc(research.bgg_error)}</p>`:""}</div>`:"";
   const fmtSuggestion=(field,value)=>{if(value===null||value===undefined||value===""||(Array.isArray(value)&&!value.length))return "—";return valueText(field,value);};
   const suggestionRows=pendingSuggestions.map(item=>{
     const field=item.field,label=FIELD_LABELS[field]||field,current=game[field],proposed=item.value;
