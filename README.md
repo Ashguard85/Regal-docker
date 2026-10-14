@@ -1,48 +1,15 @@
-# Brettspielregal – Docker Fullstack v8.7.1
+# Brettspielregal – Docker Fullstack v8.7.2
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
 
-## Neu in v8.7.1
+## Neu in v8.7.2
 
-### Hotfix: robuste Quellen-Fallbacks bei kurzen/mehrdeutigen Titeln
-
-Bei Titeln wie **Scythe** konnte v8.7 abbrechen, obwohl SearXNG brauchbare Treffer gefunden hatte: Die vorselektierten Seiten wurden nur einmal versucht und die öffentliche BoardGameGeek-Spielseite war pauschal ausgeschlossen.
-
-- Wenn die strukturierte BGG-API nicht verfügbar ist (z. B. ohne `BGG_API_TOKEN`), darf die öffentliche BGG-Spielseite jetzt als normale Referenzquelle einspringen.
-- Der Worker baut eine grössere Fetch-Warteschlange auf und probiert weitere hochwertige Treffer, bis `AUTO_FETCH_PAGES` Seiten **erfolgreich** abgerufen wurden. Ein HTTP-403 einer guten Quelle beendet die Recherche nicht mehr.
-- Zusätzlich wird eine englische `"<Titel>" board game`-Discovery-Suche verwendet; das verbessert kurze internationale Titel.
-- Fehlermeldungen unterscheiden nun zwischen **keinen Treffern**, **zu schwachen Treffern** und **gefundenen, aber nicht abrufbaren Seiten** und hängen den BGG-Hinweis an.
-- Der Recherchebericht zeigt die tatsächlich erfolgreich verwendeten Quellen; fehlgeschlagene Abrufe erscheinen bei den verworfenen Treffern.
-
-### Webrecherche grundlegend neu aufgebaut
-
-Die allgemeine Websuche ist nicht mehr die Faktengrundlage für Ollama. Der Hintergrundimport arbeitet jetzt in klar getrennten Schritten:
-
-1. Titel/EAN erfassen – das Spiel steht sofort in der Sammlung.
-2. BoardGameGeek wird als **strukturierte Identitätsquelle** abgefragt, wenn ein Titel vorhanden ist.
-3. SearXNG sucht mit mehreren gezielten Queries nur nach möglichen URLs.
-4. Treffer werden **vor dem Abruf** bewertet: Titelähnlichkeit, exakte EAN, Primärquelle, Verlag/Jahr sowie Abzüge für Review/Test oder mögliche Erweiterungen.
-5. Nur die besten **2–4 Quellen** werden direkt geladen. Such-Snippets werden nicht an Ollama als Fakten weitergegeben.
-6. Jede ausgewählte Quelle wird getrennt deterministisch extrahiert (JSON-LD/Metadaten/Seitentext).
-7. Erst das kleine, vorselektierte Recherchebundle geht an Qwen3 14B zur Zusammenführung und deutschen Normalisierung.
-8. Die Ergebnisse bleiben weiterhin temporäre Vorschläge und überschreiben deine Sammlung erst nach Freigabe.
-
-Bei einer EAN-Erfassung versucht v8.7 zuerst eine passende Produktseite zu finden. Sobald daraus ein plausibler Titel extrahiert wurde, wird BGG zusätzlich mit diesem Titel als strukturierte Referenz abgefragt. Für die aktuelle BGG-XML-API muss `BGG_API_TOKEN` gesetzt sein; ohne Token läuft die Recherche weiter, nur der strukturierte BGG-Schritt wird übersprungen.
-
-### Transparente Quellenauswahl
-
-In **Vorschläge prüfen** wird jetzt sichtbar:
-
-- welche BGG-Identität erkannt wurde und mit welchem Match-Score,
-- welche Quellen tatsächlich an Ollama weitergegeben wurden,
-- welche Suchtreffer vorher verworfen wurden und warum.
-
-Der Direktlink-Import bleibt unverändert der präziseste Weg: dort entfällt die allgemeine Suchphase vollständig.
-
-### GitHub Pages + Docker aus v8.6 bleibt enthalten
-
-Mehrere externe Frontend-Origins über `PWA_ALLOWED_ORIGINS`, Systemdiagnose für API/Worker/Ollama/SearXNG/CORS und same-origin Betrieb der lokalen Docker-Seite bleiben unverändert verfügbar.
+- **Robustere SearXNG-Fallbacks:** zuerst deutsch, bei zu wenigen verlässlichen Treffern automatisch mehrsprachig (`language=all`).
+- **Einfache Suchanfragen statt überstrenger Operatoren:** kurze Titel wie `Scythe` funktionieren auch mit Engines, die Quotes/Site-Filter schlecht unterstützen.
+- **HTTP-Suchergebnisse werden nie unsicher geladen:** Standard-HTTP-Treffer werden nur als HTTPS-Variante geprüft; private/unsichere Ziele bleiben blockiert.
+- **BGG kann SearXNG überbrücken:** mit gültigem BGG-Token reicht eine strukturierte BGG-Identifikation als belastbare Quelle, damit Ollama weiterarbeiten kann.
+- **Bessere Fehlerdiagnose:** 0 Roh-Treffer, verworfene URLs, nicht antwortende Engines und Abruffehler werden getrennt ausgewiesen.
 
 ## Neu in v8.5.3
 
@@ -148,7 +115,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.1.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.2.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

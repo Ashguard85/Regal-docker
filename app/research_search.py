@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.1"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.2"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -66,15 +66,58 @@ def provider_status():
     return {"status": "ok", "provider": "searxng", "http_status": response.status_code}
 
 
-def searxng_search(query, limit=None):
+def _normalize_search_result_url(raw_url):
+    """Return a safe public HTTPS candidate and whether HTTP was upgraded.
+
+    Search engines occasionally expose an ``http://`` canonical URL even when
+    the same public site supports HTTPS.  We never fetch plain HTTP, but we may
+    safely try the equivalent HTTPS URL on the standard port.  Private/local
+    targets are still rejected by ``validate_public_https_url``.
+    """
+    raw_url = str(raw_url or "").strip()
+    if not raw_url:
+        raise ValueError("Leere URL.")
+    parsed = urlparse(raw_url)
+    upgraded = False
+    if parsed.scheme.lower() == "http":
+        if parsed.username or parsed.password:
+            raise ValueError("URL mit Zugangsdaten ist nicht erlaubt.")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Ungültiger Port.") from exc
+        if port not in (None, 80):
+            raise ValueError("HTTP-URL verwendet einen nicht unterstützten Port.")
+        host = parsed.hostname or ""
+        if not host:
+            raise ValueError("Hostname fehlt.")
+        host_text = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        parsed = parsed._replace(scheme="https", netloc=host_text)
+        raw_url = parsed.geturl()
+        upgraded = True
+    return validate_public_https_url(raw_url), upgraded
+
+
+def searxng_search(query, limit=None, *, language="de", safesearch=0, include_meta=False):
+    """Search SearXNG and keep only public HTTPS URLs.
+
+    v8.7.2 exposes lightweight diagnostics to the caller while preserving the
+    strict public-HTTPS policy used by the page fetcher.
+    """
     base = _searxng_base_url()
     limit = limit or _int_env("AUTO_SEARCH_RESULTS", 8, 3, 15)
     timeout = _int_env("AUTO_SEARCH_TIMEOUT_SECONDS", 20, 5, 60)
     try:
         response = requests.get(
             f"{base}/search",
-            params={"q": query, "format": "json", "language": "de", "safesearch": "1"},
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.1"},
+            params={
+                "q": query,
+                "format": "json",
+                "language": language,
+                "safesearch": str(safesearch),
+                "categories": "general",
+            },
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.2"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -87,17 +130,28 @@ def searxng_search(query, limit=None):
         payload = response.json()
     except ValueError as exc:
         raise ResearchSearchError("SearXNG lieferte kein gültiges JSON.") from exc
+
+    raw_results = payload.get("results") or []
     rows, seen = [], set()
-    for item in payload.get("results") or []:
+    rejected = {"missing_url": 0, "unsafe_url": 0, "duplicate": 0}
+    http_upgraded = 0
+    for item in raw_results:
         if not isinstance(item, dict):
             continue
         url = str(item.get("url") or "").strip()
-        if not url or url in seen:
+        if not url:
+            rejected["missing_url"] += 1
             continue
         try:
-            safe = validate_public_https_url(url)
+            safe, upgraded = _normalize_search_result_url(url)
         except ValueError:
+            rejected["unsafe_url"] += 1
             continue
+        if safe in seen:
+            rejected["duplicate"] += 1
+            continue
+        if upgraded:
+            http_upgraded += 1
         seen.add(safe)
         rows.append({
             "url": safe,
@@ -107,8 +161,17 @@ def searxng_search(query, limit=None):
         })
         if len(rows) >= limit:
             break
-    return rows
 
+    meta = {
+        "query": str(query),
+        "language": language,
+        "raw_results": len(raw_results),
+        "accepted_https": len(rows),
+        "http_upgraded": http_upgraded,
+        "rejected": rejected,
+        "unresponsive_engines": payload.get("unresponsive_engines") or [],
+    }
+    return (rows, meta) if include_meta else rows
 
 def _norm(value):
     value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
@@ -181,55 +244,141 @@ def score_candidate(row, query, current_game=None, settings=None):
     return row
 
 
+def _unique(values):
+    out = []
+    for value in values:
+        value = str(value or "").strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
 def _search_queries(query, current_game, settings):
+    """German-first discovery queries.
+
+    Keep these intentionally simple. Some engines behind SearXNG behave badly
+    with quoted expressions, large OR expressions or site filters.
+    """
     expected = _expected_title(query, current_game)
     ean = _query_ean(query, current_game)
     queries = []
     if ean:
-        queries += [f'"{ean}" Brettspiel', f'"{ean}" Spiel']
+        queries += [ean, f"{ean} Brettspiel", f"{ean} board game"]
     if expected:
-        queries += [f'"{expected}" Brettspiel', f'"{expected}" Spiel Verlag', f'"{expected}" board game']
-        # One focused BGG URL-discovery query. Structured BGG lookup runs independently.
-        queries.append(f'"{expected}" site:boardgamegeek.com/boardgame')
-        primary = (settings.get("primary_domains") or [])[:7]
-        if primary:
-            queries.append(f'"{expected}" (' + " OR ".join(f"site:{d}" for d in primary) + ")")
+        queries += [
+            expected,
+            f"{expected} Brettspiel",
+            f"{expected} board game",
+            f"{expected} BoardGameGeek",
+            f"{expected} Verlag",
+        ]
     if not queries:
         queries.append(str(query))
-    out = []
-    for q in queries:
-        if q not in out:
-            out.append(q)
-    return out[:5]
+    return _unique(queries)[:5]
 
 
-def search(query, current_game=None):
-    provider = search_provider_name()
-    if provider == "none":
-        raise ResearchSearchError("Automatische Websuche ist nicht eingerichtet (AUTO_SEARCH_PROVIDER=none).")
-    settings = get_settings()
-    current_game = current_game or {}
-    rows, errors = [], []
-    for q in _search_queries(query, current_game, settings):
-        try:
-            rows.extend(searxng_search(q, limit=8))
-        except ResearchSearchError as exc:
-            errors.append(str(exc))
-    if not rows and errors:
-        raise ResearchSearchError(errors[-1])
+def _fallback_queries(query, current_game, settings):
+    """Broader multilingual rescue queries used only when discovery is weak."""
+    expected = _expected_title(query, current_game)
+    ean = _query_ean(query, current_game)
+    queries = []
+    if ean:
+        queries += [ean, f"{ean} board game"]
+    if expected:
+        queries += [expected, f"{expected} board game", f"{expected} BoardGameGeek"]
+        # Domain names as plain terms work across more SearXNG engines than a
+        # single complex ``site:a OR site:b`` expression.
+        for domain in (settings.get("primary_domains") or [])[:3]:
+            queries.append(f"{expected} {domain}")
+    if not queries:
+        queries.append(str(query))
+    return _unique(queries)[:6]
+
+
+def _rank_rows(rows, query, current_game, settings):
     dedup = {}
     for row in rows:
         url = row.get("url")
         if not url or url in dedup:
             continue
         dedup[url] = score_candidate(row, query, current_game, settings)
-    return sorted(dedup.values(), key=lambda x: (x.get("score", -999), -len(x.get("url", ""))), reverse=True)[:30]
+    return sorted(
+        dedup.values(),
+        key=lambda x: (x.get("score", -999), -len(x.get("url", ""))),
+        reverse=True,
+    )[:30]
 
+
+def _is_plausible_candidate(row):
+    if row.get("trust") == "low":
+        return False
+    score = int(row.get("score") or 0)
+    trust = row.get("trust")
+    threshold = 12 if trust == "primary" else 18 if trust == "reference" else 22
+    return score >= threshold
+
+
+def search(query, current_game=None, *, return_diagnostics=False):
+    provider = search_provider_name()
+    if provider == "none":
+        raise ResearchSearchError("Automatische Websuche ist nicht eingerichtet (AUTO_SEARCH_PROVIDER=none).")
+    settings = get_settings()
+    current_game = current_game or {}
+    rows, errors, diagnostics = [], [], []
+
+    # Pass 1: German-first discovery. SafeSearch is deliberately disabled for
+    # this private metadata lookup; the SearXNG instance remains the policy
+    # boundary and only public HTTPS URLs survive validation.
+    for q in _search_queries(query, current_game, settings):
+        try:
+            found, meta = searxng_search(q, limit=8, language="de", safesearch=0, include_meta=True)
+            meta["phase"] = "de"
+            rows.extend(found)
+            diagnostics.append(meta)
+            # Enough diverse candidates are available; avoid hammering the
+            # local metasearch instance with redundant discovery queries.
+            interim = _rank_rows(rows, query, current_game, settings)
+            if sum(1 for row in interim if _is_plausible_candidate(row)) >= 3:
+                break
+        except ResearchSearchError as exc:
+            errors.append(str(exc))
+            diagnostics.append({"query": q, "language": "de", "phase": "de", "error": str(exc)})
+
+    ranked = _rank_rows(rows, query, current_game, settings)
+    plausible_count = sum(1 for row in ranked if _is_plausible_candidate(row))
+
+    # Pass 2: broad multilingual rescue. Run it not only for zero rows, but
+    # also when German search returned only weak/noisy candidates. This is the
+    # important rescue path for international titles such as "Scythe".
+    if plausible_count < 2:
+        for q in _fallback_queries(query, current_game, settings):
+            try:
+                found, meta = searxng_search(q, limit=12, language="all", safesearch=0, include_meta=True)
+                meta["phase"] = "multilingual"
+                meta["fallback"] = "language=all"
+                rows.extend(found)
+                diagnostics.append(meta)
+                interim = _rank_rows(rows, query, current_game, settings)
+                if sum(1 for row in interim if _is_plausible_candidate(row)) >= 3:
+                    break
+            except ResearchSearchError as exc:
+                errors.append(str(exc))
+                diagnostics.append({"query": q, "language": "all", "phase": "multilingual", "error": str(exc)})
+        ranked = _rank_rows(rows, query, current_game, settings)
+
+    if not ranked and errors and not any(int(d.get("raw_results") or 0) for d in diagnostics if isinstance(d, dict)):
+        # Preserve the actionable transport/configuration error when no engine
+        # produced any result at all.
+        raise ResearchSearchError(errors[-1])
+
+    if return_diagnostics:
+        return ranked, diagnostics
+    return ranked
 
 def _select_candidates(candidates, max_pages, *, allow_bgg_html=False):
     """Build a robust fetch queue from strong candidates.
 
-    v8.7.1 deliberately returns more than ``max_pages`` candidates so a blocked
+    v8.7.2 deliberately returns more than ``max_pages`` candidates so a blocked
     publisher/shop page does not abort the whole research job. Only successful
     fetches count against ``max_pages`` later in ``research_game``.
     """
@@ -304,18 +453,38 @@ def research_game(query, current_game=None):
     if not query:
         raise ResearchSearchError("Suchbegriff fehlt.")
     current_game = current_game or {}
-    candidates = search(query, current_game)
     max_pages = _int_env("AUTO_FETCH_PAGES", 3, 1, 4)
     max_total_chars = _int_env("AUTO_RESEARCH_MAX_CHARS", 24000, 8000, 50000)
 
-    # Identify with structured BGG first. When that is unavailable (for example
-    # no API token), a public BGG game page is allowed back into the normal web
-    # fetch queue as a fallback reference.
+    # Structured identity is independent of SearXNG and should be attempted
+    # first.  With a BGG token, a temporary SearXNG outage must not prevent a
+    # well-known game from reaching Ollama.
     bgg_identity, bgg_error = None, ""
     try:
         bgg_identity = identify_bgg(query, current_game)
     except BGGError as exc:
         bgg_error = str(exc)
+
+    try:
+        try:
+            search_result = search(query, current_game, return_diagnostics=True)
+        except TypeError as exc:
+            # Backwards-compatible for tests/custom integrations that still
+            # provide the pre-v8.7.2 list-only search contract.
+            if "return_diagnostics" not in str(exc):
+                raise
+            search_result = search(query, current_game)
+        if isinstance(search_result, tuple) and len(search_result) == 2:
+            candidates, search_diagnostics = search_result
+        else:
+            candidates, search_diagnostics = search_result, []
+    except ResearchSearchError as exc:
+        # If BGG already identified the game, continue with the structured
+        # evidence.  Otherwise this remains a genuine research failure.
+        if bgg_identity:
+            candidates, search_diagnostics = [], [{"error": str(exc)}]
+        else:
+            raise
 
     selected, ignored = _select_candidates(
         candidates, max_pages, allow_bgg_html=not bool(bgg_identity)
@@ -362,11 +531,29 @@ def research_game(query, current_game=None):
 
     if not bundles:
         if not candidates:
-            detail = "SearXNG lieferte keine passenden HTTPS-Treffer."
+            raw = sum(int(d.get("raw_results") or 0) for d in search_diagnostics if isinstance(d, dict))
+            accepted = sum(int(d.get("accepted_https") or 0) for d in search_diagnostics if isinstance(d, dict))
+            unresponsive = []
+            for d in search_diagnostics:
+                if isinstance(d, dict):
+                    for item in d.get("unresponsive_engines") or []:
+                        name = item[0] if isinstance(item, (list, tuple)) and item else str(item)
+                        if name and name not in unresponsive:
+                            unresponsive.append(str(name))
+            if raw:
+                detail = f"SearXNG lieferte {raw} Roh-Treffer, aber keinen verwendbaren öffentlichen HTTPS-Treffer."
+            else:
+                detail = "SearXNG lieferte auch bei einer einfachen mehrsprachigen Suche keine Treffer."
+            if unresponsive:
+                detail += " Nicht antwortende Suchmaschinen: " + ", ".join(unresponsive[:6]) + "."
         elif fetch_failures:
             detail = f"{len(fetch_failures)} passende Quelle(n) wurden gefunden, konnten aber nicht abgerufen werden."
+            first_error = str(fetch_failures[0].get("error") or "").strip()
+            if first_error:
+                detail += " Erster Abruffehler: " + first_error[:140]
         else:
-            detail = "Die gefundenen Treffer lagen unter der Vertrauensschwelle."
+            top_score = max((int(row.get("score") or 0) for row in candidates), default=0)
+            detail = f"{len(candidates)} öffentliche HTTPS-Treffer wurden gefunden, aber keiner war verlässlich genug (beste Bewertung: {top_score})."
         if bgg_error:
             detail += " BGG: " + bgg_error
         raise ResearchSearchError("Keine verlässliche Quelle konnte verwendet werden. " + detail)
@@ -394,7 +581,7 @@ def research_game(query, current_game=None):
             selected_report.append(item)
     ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons", "fetch_error")} for row in candidates if row.get("url") not in successful_urls][:10]
     report = {
-        "pipeline": "v8.7",
+        "pipeline": "v8.7.2",
         "identity": ({
             "provider": "BoardGameGeek", "bgg_id": bgg_identity["data"]["bgg_id"],
             "title": bgg_identity["data"].get("name", ""), "matched_name": bgg_identity["matched_name"],
@@ -406,6 +593,7 @@ def research_game(query, current_game=None):
         "candidate_count": len(candidates),
         "pages_fetched": fetched,
         "fetch_failures": len(fetch_failures),
+        "search_diagnostics": search_diagnostics[-6:],
     }
     return {
         "query": query,

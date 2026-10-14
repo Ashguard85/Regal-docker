@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.7.1
+# Portainer Stack – Brettspielregal v8.7.2
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -24,7 +24,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.1.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.2.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -156,9 +156,13 @@ Danach **Update the stack**.
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
-## v8.7.1 – robustere Webrecherche
+## v8.7.2 – robustere Webrecherche
 
-Bei blockierten Produktseiten probiert der Worker automatisch weitere gute Treffer. Falls die strukturierte BGG-API nicht verfügbar ist, kann die öffentliche BGG-Spielseite als Web-Referenz verwendet werden. Ein `BGG_API_TOKEN` bleibt für die strukturierte XML-API empfohlen, ist aber nicht mehr der einzige Weg zu BGG-Daten.
+Die Suche läuft jetzt gestuft: zuerst deutsch, bei zu wenigen belastbaren Kandidaten automatisch mehrsprachig (`language=all`). Kurze Titel wie `Scythe` werden zusätzlich mit einfachen, unquoted Suchbegriffen gesucht. Blockierte Produktseiten führen nicht sofort zum Abbruch; der Worker probiert weitere Kandidaten.
+
+Ein gültiger `BGG_API_TOKEN` bleibt empfohlen: gelingt die strukturierte BGG-Identifikation, kann der Worker auch bei einer leeren oder vorübergehend gestörten SearXNG-Suche bis zu Ollama weiterarbeiten. Ohne Token kann eine über SearXNG gefundene öffentliche BGG-Spielseite weiterhin als Web-Referenz dienen.
+
+SearXNG-Diagnosen unterscheiden nun zwischen 0 Roh-Treffern, verworfenen unsicheren URLs, nicht antwortenden Engines, zu schwachen Kandidaten und Seiten-Abruffehlern.
 
 ## v8.7 – bessere Webrecherche
 

@@ -91,13 +91,13 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="8.7.1",
+            version="8.7.2",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
             ai=ai,
             search=search,
-            research={"pipeline":"v8.7-preselected-sources","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
+            research={"pipeline":"v8.7.2-preselected-sources","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
             cors=_cors_status_for_request(),
         )
 
@@ -108,13 +108,13 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.7.1",
+            version="8.7.2",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
             auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
             auto_search_provider=auto_search_provider_name(),
-            research_pipeline="v8.7-preselected-sources",
+            research_pipeline="v8.7.2-preselected-sources",
             bgg_enabled=os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},
             bgg_configured=bool(os.environ.get("BGG_API_TOKEN", "").strip()),
             tag_catalog=tag_catalog(),
