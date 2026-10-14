@@ -1,14 +1,14 @@
-# Test Report – v8.7.3
+# Test Report – v8.8.0
 
 ## Ergebnis
 
-- **61 nicht-Flask-basierte Tests bestanden.**
-- Darunter neue v8.7.3-Tests für automatische Verlags-/Herstellererkennung nach Seitenabruf und Post-Fetch-Ranking (Feuerland vor Wikipedia).
-- Der Research-Worker lädt bei Bedarf zusätzliche Kandidaten und reicht anschließend nur die inhaltlich besten Quellen an Ollama weiter.
+- **66 nicht-Flask-basierte Tests bestanden.**
+- Neue v8.8-Tests decken Primärquellen, Mehrquellen-Bestätigung, Widersprüche, den Schutz von Titeln vor Sammelfreigabe sowie die serverseitige Funktion **„Alle gut belegten übernehmen“** ab.
+- Datenbankmigration auf **Schema 9** ergänzt `evidence_json` an temporären KI-Vorschlägen.
 - Python-Compile für alle App-Module: bestanden.
 - JavaScript-Syntax (`app.js`, `providers.js`, `service-worker.js`): bestanden.
-- Docker-/Pages-Frontend-Parität, DOM-IDs, CSS/Manifest und ZIP-Integrität werden beim Packaging geprüft.
+- DOM-ID-, CSS-/Manifest-, Docker-/Pages-Paritäts- und ZIP-Integritätsprüfungen werden beim Packaging ausgeführt.
 
 ## Umgebungshinweis
 
-Die 8 Flask-basierten API-/Attachment-Integrationstests können in dieser Build-Umgebung nicht ausgeführt werden, weil das Python-Paket `flask` hier nicht installiert ist. Beim vollständigen `pytest`-Lauf scheitern genau diese 8 Tests bereits beim Import mit `ModuleNotFoundError: flask`; die übrigen 61 Tests sind grün.
+Die **8 Flask-basierten API-/Attachment-Integrationstests** können in dieser Build-Umgebung nicht ausgeführt werden, weil das Python-Paket `flask` hier nicht installiert ist. Sie scheitern bereits beim Import mit `ModuleNotFoundError: flask`; die übrigen 66 Tests sind grün.

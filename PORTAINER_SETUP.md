@@ -1,4 +1,4 @@
-# Portainer Stack – Brettspielregal v8.7.3
+# Portainer Stack – Brettspielregal v8.8.0
 
 Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
 
@@ -17,6 +17,11 @@ In Portainer unter **Stack → Environment variables** müssen gesetzt sein:
 ```text
 SECRET_KEY      = dein bisheriger Brettspielregal-Schlüssel
 SEARXNG_SECRET  = ein langer zufälliger Schlüssel
+```
+
+Optional:
+
+```text
 BGG_API_TOKEN   = dein BoardGameGeek Application Token (für strukturierte BGG-Daten)
 ```
 
@@ -24,7 +29,7 @@ Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-
 
 ## Web Editor
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.7.3.yml` ersetzen oder folgenden Inhalt einfügen:
+In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v8.8.0.yml` ersetzen oder folgenden Inhalt einfügen:
 
 ```yaml
 x-app-build: &app-build
@@ -156,7 +161,7 @@ Danach **Update the stack**.
 
 Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
 
-## v8.7.3 – automatische Quellenklassifizierung
+## v8.8.0 – automatische Quellenklassifizierung
 
 Nach dem erfolgreichen Abruf bewertet der Worker den **echten Seiteninhalt** ein zweites Mal. Dadurch kann eine bisher unbekannte Verlagsdomain automatisch als offizielle Quelle erkannt werden, wenn Domain/Verlagsidentität und Seiteninhalt zusammenpassen.
 
@@ -210,7 +215,7 @@ Dort gibt es:
 
 Alle frei formulierten KI-Werte sollen auf Deutsch gespeichert werden. BoardGameGeek darf als englische Referenz dienen, wird aber vor der Übernahme durch Qwen auf deutsche Beschreibungen/Tags normalisiert. Technische Werte wie Ollama-URL, Modelle und Timeouts bleiben in Portainer.
 
-Ein bereits gespeicherter eigener Prompt wird nicht überschrieben. v8.7 hängt die neue verbindliche Quellenregel automatisch an alte Prompts an. Für den vollständigen neuen Standard kannst du optional **Auf Standard zurücksetzen** wählen. Siehe `OLLAMA_PROMPT_V8.7.md`.
+Ein bereits gespeicherter eigener Prompt wird nicht überschrieben. v8.8 hängt die neue verbindliche Quellenregel automatisch an alte Prompts an. Für den vollständigen neuen Standard kannst du optional **Auf Standard zurücksetzen** wählen. Siehe `OLLAMA_PROMPT_V8.8.md`.
 
 
 ## GitHub Pages und mehrere erlaubte Origins
@@ -226,3 +231,8 @@ Bei einer eigenen Pages-Domain trägst du deren **Origin** zusätzlich ein, ohne
 Die lokale Docker-Seite auf `http://192.168.1.127:8190` greift same-origin auf die API zu und braucht CORS technisch nicht; der Eintrag schadet jedoch nicht und erleichtert spätere getrennte lokale Frontends.
 
 Für GitHub Pages muss die Backend-URL eine öffentliche HTTPS-Adresse des Reverse Proxys sein. Ollama und SearXNG bleiben intern und werden nicht öffentlich freigegeben.
+
+
+## v8.8 – Feldbelege und Schnellfreigabe
+
+Für v8.8 sind **keine neuen Environment-Variablen** nötig. Die Feldbelege werden aus den bereits geladenen Quellen berechnet und in SQLite gespeichert. Bestehende offene Vorschläge aus v8.7.x erhalten nicht rückwirkend belastbare Belege; dafür das Spiel einmal **Neu recherchieren**.

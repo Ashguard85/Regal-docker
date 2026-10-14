@@ -87,7 +87,7 @@ def _get(path, params):
                 headers={
                     "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.1",
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": "Brettspielregal/8.7.3 (private self-hosted collection)",
+                    "User-Agent": "Brettspielregal/8.8.0 (private self-hosted collection)",
                 },
                 timeout=(4, _timeout()),
                 allow_redirects=False,

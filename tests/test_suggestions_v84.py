@@ -54,3 +54,28 @@ def test_manual_values_survive_research_until_user_accepts():
         assert db.get_game("g1")["publisher"] == "Mein Verlag"
         suggestions={x["field"]:x["value"] for x in db.get_import_job(job["id"])["suggestions"]}
         assert suggestions["publisher"] == "Next Move Games"
+
+
+def test_safe_bulk_apply_uses_backend_evidence_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        db=setup(tmp)
+        game=db.normalize_game({"id":"g1","title":"Scythe"})
+        db.save_game(game)
+        job=db.enqueue_import_job("g1","Scythe")
+        proposed=db.normalize_game({**game,"publisher":"Feuerland Spiele","year":2016,"description":"KI-Text"},game)
+        evidence={
+            "publisher":{"level":"primary","safe_to_apply":True,"label":"Primärquelle"},
+            "year":{"level":"strong","safe_to_apply":True,"label":"Gut belegt"},
+            "description":{"level":"derived","safe_to_apply":False,"label":"KI-abgeleitet"},
+        }
+        db.replace_import_suggestions(job["id"],"g1",proposed,game,field_evidence=evidence)
+        db.update_import_job(job["id"],status="review",progress="Vorschläge bereit")
+        result=db.apply_safe_import_suggestions(job["id"])
+        assert set(result["applied"]) == {"publisher","year"}
+        saved=db.get_game("g1")
+        assert saved["publisher"] == "Feuerland Spiele"
+        assert saved["year"] == 2016
+        assert saved["description"] == ""
+        pending={x["field"]:x for x in db.get_import_job(job["id"])["suggestions"] if x["status"]=="pending"}
+        assert "description" in pending
+        assert pending["description"]["evidence"]["level"] == "derived"

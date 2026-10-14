@@ -118,7 +118,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.7.3",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"8.8.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -182,6 +182,7 @@ export class ServerProvider{
   enqueueEnrichment(gameId,query="",replaceActive=false){return this.request(`/api/import-queue/games/${encodeURIComponent(gameId)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query,replace_active:replaceActive}),timeoutMs:20000});}
   approveImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/approve`,{method:"POST",timeoutMs:20000});}
   applyImportSuggestions(jobId,fields=null){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/apply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields===null?{}:{fields}),timeoutMs:30000});}
+  applySafeImportSuggestions(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/apply-safe`,{method:"POST",timeoutMs:30000});}
   rejectImportSuggestions(jobId,fields=null){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/suggestions/reject`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields===null?{}:{fields}),timeoutMs:30000});}
   retryImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/retry`,{method:"POST",timeoutMs:20000});}
   requestCancelImportJob(jobId){return this.request(`/api/import-queue/${encodeURIComponent(jobId)}/cancel`,{method:"POST",timeoutMs:20000});}

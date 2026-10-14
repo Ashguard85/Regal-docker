@@ -175,6 +175,13 @@ def init_db():
                 conn.execute("ALTER TABLE import_jobs ADD COLUMN research_json TEXT NOT NULL DEFAULT '{}'")
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (8, utcnow()))
 
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 9 not in applied:
+            existing = _columns(conn, "import_suggestions")
+            if "evidence_json" not in existing:
+                conn.execute("ALTER TABLE import_suggestions ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'")
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (9, utcnow()))
+
 
 def get_app_settings(keys=None):
     with connect() as conn:
@@ -414,6 +421,11 @@ def _suggestion_row(row):
         data["value"] = json.loads(data.pop("value_json"))
     except (json.JSONDecodeError, TypeError):
         data["value"] = None
+    evidence_raw = data.pop("evidence_json", "{}")
+    try:
+        data["evidence"] = json.loads(evidence_raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        data["evidence"] = {}
     return data
 
 
@@ -621,11 +633,12 @@ AI_SUGGESTIBLE_FIELDS = {
 }
 
 
-def replace_import_suggestions(job_id, game_id, proposed_game, current_game):
+def replace_import_suggestions(job_id, game_id, proposed_game, current_game, field_evidence=None):
     """Replace temporary AI proposals for a job without touching the approved game row."""
     now = utcnow()
     import uuid
     rows = []
+    field_evidence = field_evidence or {}
     for field in sorted(AI_SUGGESTIBLE_FIELDS):
         proposed = proposed_game.get(field)
         current = current_game.get(field)
@@ -633,7 +646,12 @@ def replace_import_suggestions(job_id, game_id, proposed_game, current_game):
             continue
         if proposed == current:
             continue
-        rows.append((str(uuid.uuid4()), job_id, game_id, field, json.dumps(proposed, ensure_ascii=False), "pending", now, now))
+        rows.append((
+            str(uuid.uuid4()), job_id, game_id, field,
+            json.dumps(proposed, ensure_ascii=False),
+            json.dumps(field_evidence.get(field) or {}, ensure_ascii=False),
+            "pending", now, now
+        ))
     with connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         job = conn.execute("SELECT status,cancel_requested FROM import_jobs WHERE id=?", (job_id,)).fetchone()
@@ -641,7 +659,7 @@ def replace_import_suggestions(job_id, game_id, proposed_game, current_game):
             conn.rollback()
             return 0
         conn.execute("DELETE FROM import_suggestions WHERE job_id=?", (job_id,))
-        conn.executemany("INSERT INTO import_suggestions(id,job_id,game_id,field,value_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", rows)
+        conn.executemany("INSERT INTO import_suggestions(id,job_id,game_id,field,value_json,evidence_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     return len(rows)
 
@@ -706,6 +724,25 @@ def apply_import_suggestions(job_id, fields=None):
         pending = _finish_job_if_no_pending(conn, job_id)
         conn.commit()
         return {"game": normalized, "applied": applied, "pending": pending}
+
+
+def apply_safe_import_suggestions(job_id):
+    """Apply only pending proposals that backend evidence marked safe for bulk approval."""
+    with connect() as conn:
+        job = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            return None
+        if job["status"] != "review":
+            raise ValueError("Nur offene KI-Vorschläge können übernommen werden.")
+        rows = conn.execute("SELECT * FROM import_suggestions WHERE job_id=? AND status='pending'", (job_id,)).fetchall()
+        fields = []
+        for row in rows:
+            item = _suggestion_row(row)
+            if bool((item.get("evidence") or {}).get("safe_to_apply")):
+                fields.append(item["field"])
+    if not fields:
+        return {"game": None, "applied": [], "pending": len(rows)}
+    return apply_import_suggestions(job_id, fields)
 
 
 def reject_import_suggestions(job_id, fields=None):

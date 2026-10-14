@@ -1,6 +1,6 @@
 window.APP_CONFIG = {
   buildTarget: "shared",
-  version: "8.7.3",
+  version: "8.8.0",
   defaultApiUrl: "",
   allowLocalMode: true
 };

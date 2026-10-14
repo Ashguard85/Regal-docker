@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.7.3"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/8.8.0"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -101,7 +101,7 @@ def _normalize_search_result_url(raw_url):
 def searxng_search(query, limit=None, *, language="de", safesearch=0, include_meta=False):
     """Search SearXNG and keep only public HTTPS URLs.
 
-    v8.7.3 exposes lightweight diagnostics to the caller while preserving the
+    v8.8.0 exposes lightweight diagnostics to the caller while preserving the
     strict public-HTTPS policy used by the page fetcher.
     """
     base = _searxng_base_url()
@@ -117,7 +117,7 @@ def searxng_search(query, limit=None, *, language="de", safesearch=0, include_me
                 "safesearch": str(safesearch),
                 "categories": "general",
             },
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.7.3"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/8.8.0"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -378,7 +378,7 @@ def search(query, current_game=None, *, return_diagnostics=False):
 def _select_candidates(candidates, max_pages, *, allow_bgg_html=False):
     """Build a robust fetch queue from strong candidates.
 
-    v8.7.3 deliberately returns more than ``max_pages`` candidates so a blocked
+    v8.8.0 deliberately returns more than ``max_pages`` candidates so a blocked
     publisher/shop page does not abort the whole research job. Only successful
     fetches count against ``max_pages`` later in ``research_game``.
     """
@@ -634,7 +634,7 @@ def research_game(query, current_game=None):
             search_result = search(query, current_game, return_diagnostics=True)
         except TypeError as exc:
             # Backwards-compatible for tests/custom integrations that still
-            # provide the pre-v8.7.3 list-only search contract.
+            # provide the pre-v8.8.0 list-only search contract.
             if "return_diagnostics" not in str(exc):
                 raise
             search_result = search(query, current_game)
@@ -744,7 +744,7 @@ def research_game(query, current_game=None):
         raise ResearchSearchError("Keine verlässliche Quelle konnte verwendet werden. " + detail)
 
     evidence_obj = {
-        "pipeline": "v8.7.3-postfetch-ranked-sources",
+        "pipeline": "v8.8-postfetch-ranked-field-evidence",
         "query": query,
         "important": "SearXNG wurde nur zum Finden von URLs verwendet. Such-Snippets sind KEINE Faktengrundlage.",
         "sources": bundles,
@@ -769,7 +769,7 @@ def research_game(query, current_game=None):
     selected_report.sort(key=lambda item: int(item.get("post_fetch_score") if item.get("post_fetch_score") is not None else item.get("score") or -999), reverse=True)
     ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons", "fetch_error", "source_class", "source_label", "post_fetch_score", "post_fetch_reasons")} for row in candidates if row.get("url") not in successful_urls][:10]
     report = {
-        "pipeline": "v8.7.3",
+        "pipeline": "v8.8.0",
         "identity": ({
             "provider": "BoardGameGeek", "bgg_id": bgg_identity["data"]["bgg_id"],
             "title": bgg_identity["data"].get("name", ""), "matched_name": bgg_identity["matched_name"],
@@ -792,4 +792,5 @@ def research_game(query, current_game=None):
         "pages_fetched": fetched,
         "pages_used": len(used_pages),
         "research": report,
+        "_field_source_bundles": bundles,
     }

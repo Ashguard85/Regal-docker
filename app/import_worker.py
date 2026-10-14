@@ -8,6 +8,7 @@ from . import db
 from .ai_import import import_from_research
 from .ai_provider import AIProviderError
 from .research_search import ResearchSearchError, research_game
+from .evidence import build_field_evidence
 
 RUNNING = True
 CURRENT_MESSAGE = "Worker gestartet"
@@ -108,7 +109,10 @@ def process_job(job):
 
     # KI-Daten werden niemals direkt in games geschrieben. Sie bleiben als
     # temporäre Feldvorschläge, bis der Benutzer sie ausdrücklich übernimmt.
-    suggestion_count = db.replace_import_suggestions(job_id, game["id"], normalized, game)
+    field_evidence = build_field_evidence(normalized, research.get("_field_source_bundles") or [])
+    suggestion_count = db.replace_import_suggestions(
+        job_id, game["id"], normalized, game, field_evidence=field_evidence
+    )
     if _job_cancelled(job_id):
         return
 

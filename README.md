@@ -1,16 +1,29 @@
-# Brettspielregal – Docker Fullstack v8.7.3
+# Brettspielregal – Docker Fullstack v8.8.0
 
 Selbstgehostete Brettspiel-Sammlung als responsive PWA mit Flask/SQLite, Dateianhängen, lokalem Ollama, SearXNG und persistentem Hintergrund-Worker.
 
 
-## Neu in v8.7.3
+## Neu in v8.8.0
 
-- **Zweite Quellenbewertung nach dem Abruf:** nicht nur Suchtreffer/Domain, sondern der tatsächlich geladene Seiteninhalt entscheidet.
-- **Offizielle Verlags-/Herstellerseiten werden automatisch erkannt**, auch wenn ihre Domain nicht manuell als Primärquelle hinterlegt ist. Dazu werden u. a. Verlags-/Herstelleridentität, Domain, strukturierte Produktdaten und konkrete Spieldaten ausgewertet.
-- **Wikipedia und ähnliche allgemeine Referenzen bleiben nützlich, werden aber gedeckelt** und sollen nicht mehr vor einer erkannten offiziellen Produktseite liegen.
-- **Reviews und Shops werden nach dem Abruf erneut herabgestuft.**
-- Der Worker lädt einige zusätzliche Kandidaten, bewertet sie erst danach und gibt nur die besten `AUTO_FETCH_PAGES` Quellen an Ollama weiter.
-- In **Vorschläge prüfen → Quellenauswahl v8.7.3** siehst du die erkannte Quellenklasse, die neue Bewertung und die wichtigsten Gründe.
+### Feldweise Herkunft statt künstlicher KI-Prozentwerte
+
+Jeder temporäre KI-Vorschlag bekommt jetzt eine nachvollziehbare Belegstufe, die **ohne zusätzlichen Ollama-Durchlauf** aus den bereits geladenen Quellen berechnet wird:
+
+- **🔵 Primärquelle** – eine erkannte offizielle Verlags-/Herstellerseite bestätigt den Wert direkt.
+- **🟢 Gut belegt** – mindestens zwei unabhängige Quellen bestätigen denselben Wert.
+- **⚪ Eine Quelle** – der Wert ist direkt belegt, aber nur von einer nicht-offiziellen Quelle.
+- **🟡 KI-abgeleitet** – z. B. Beschreibung, Kurzregeln und Tags oder ein Wert, der nicht 1:1 strukturiert extrahiert wurde.
+- **🟠 Widerspruch** – ausgewählte Quellen nennen für ein eindeutiges Feld unterschiedliche Werte.
+
+Unter **Vorschläge prüfen** zeigt **Belege ansehen** pro Feld Quelle, Quellenklasse und den dort gefundenen Wert. Die Bewertung passiert deterministisch im Backend; der Browser kann die Belegstufe nicht selbst hochstufen.
+
+### Alle gut belegten übernehmen
+
+Der neue Button **„✓ Alle gut belegten übernehmen“** übernimmt ausschließlich Vorschläge, die das Backend als `Primärquelle` oder `Gut belegt` markiert hat. Widersprüche, KI-abgeleitete Texte/Tags und nur schwach belegte Werte bleiben offen und können weiterhin einzeln geprüft werden. Titel, Beschreibungen, Kurzregeln, Tags und Auszeichnungen werden auch bei guter Quellenlage nicht blind per Sammelfreigabe übernommen.
+
+### Performance
+
+Für die Belegstufen gibt es **keinen zweiten KI-Aufruf und keine zusätzlichen Webseitenabrufe**. Die Funktion verwendet nur die ohnehin bereits von v8.7.3 geladenen Quellenwerte. RAM-Bedarf und Modell-Ladezeit ändern sich dadurch praktisch nicht.
 
 ## Neu in v8.7.2
 
@@ -124,7 +137,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.7.3.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v8.8.0.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

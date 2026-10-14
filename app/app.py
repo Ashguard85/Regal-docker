@@ -91,13 +91,13 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="8.7.3",
+            version="8.8.0",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
             ai=ai,
             search=search,
-            research={"pipeline":"v8.7.3-postfetch-ranked-sources","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
+            research={"pipeline":"v8.8-postfetch-ranked-field-evidence","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
             cors=_cors_status_for_request(),
         )
 
@@ -108,13 +108,13 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="8.7.3",
+            version="8.8.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
             auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
             auto_search_provider=auto_search_provider_name(),
-            research_pipeline="v8.7.3-postfetch-ranked-sources",
+            research_pipeline="v8.8-postfetch-ranked-field-evidence",
             bgg_enabled=os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},
             bgg_configured=bool(os.environ.get("BGG_API_TOKEN", "").strip()),
             tag_catalog=tag_catalog(),
@@ -305,6 +305,14 @@ def create_app(test_config=None):
         try: result = db.apply_import_suggestions(job_id, fields)
         except ValueError as exc: return jsonify(error=str(exc)), 409
         if not result: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
+        return jsonify(result)
+
+    @app.route("/api/import-queue/<job_id>/suggestions/apply-safe", methods=["POST", "OPTIONS"])
+    def apply_safe_import_suggestions(job_id):
+        if request.method == "OPTIONS": return ("", 204)
+        try: result = db.apply_safe_import_suggestions(job_id)
+        except ValueError as exc: return jsonify(error=str(exc)), 409
+        if result is None: return jsonify(error="Import-Auftrag wurde nicht gefunden."), 404
         return jsonify(result)
 
     @app.route("/api/import-queue/<job_id>/suggestions/reject", methods=["POST", "OPTIONS"])

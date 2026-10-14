@@ -36,7 +36,7 @@ def test_research_bundle_excludes_search_snippets(monkeypatch):
     assert "Direkt abgerufener Seitentext" in out["evidence"]
     assert len(out["sources"]) == 2
     payload = json.loads(out["evidence"])
-    assert payload["pipeline"] == "v8.7.3-postfetch-ranked-sources"
+    assert payload["pipeline"] == "v8.8-postfetch-ranked-field-evidence"
     assert payload["sources"][0]["kind"] == "bgg_structured"
     assert out["research"]["identity"]["bgg_id"] == 199792
     assert out["research"]["ignored"][0]["trust"] == "low"
