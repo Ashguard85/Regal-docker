@@ -1,3 +1,29 @@
+# Brettspielregal – Docker Fullstack v9.1.1
+
+## Neu in v9.1.1 – Spielansicht bewusst schreibgeschützt
+
+- **Spiele ansehen:** Nur Cover, Infos, Tags, Lagerort, Links und vorhandene Bilder/PDFs öffnen. Keine verändernden Aktionen im Anzeigedialog.
+- **Bearbeiten:** Alle Aktionen für ein Spiel liegen jetzt hinter **„Bearbeiten“**: Datei hochladen/löschen, anderes Anhangsbild als Cover setzen, externes Cover/PDF lokal archivieren, Neu recherchieren und KI-Vorschläge prüfen/übernehmen/verwerfen.
+- Der Bearbeitungsdialog hat oben den ausklappbaren Bereich **„Recherche, Cover & KI verwalten“**. Bei offenen KI-Vorschlägen öffnet sich der Bereich automatisch. Die Queue-Aktion „Vorschläge prüfen“ führt direkt dorthin.
+- Einzelne KI-Freigaben ändern die gespeicherten Felder; alle anderen noch nicht gespeicherten Eingaben im Formular bleiben erhalten. Ein Forschungs-Neustart warnt, dass ungespeicherte Änderungen verloren gehen.
+- **Kein Datenbank-Update:** SQLite-Schema 11 und Backup-Format 5 bleiben gleich. Keine neuen Portainer-Variablen. PWA-Cache wurde auf `brettspielregal-pwa-v9-1-1` angehoben.
+
+## Neu in v9.1.0
+
+1. **Offline-Regal:** Bewusst erstellte IndexedDB-Momentaufnahme der Server-Sammlung und eigener Cover; beim Verbindungsverlust automatisch schreibgeschützt ansehen. Kein Offline-Schreiben, keine automatische Synchronisation, keine Zugangsdaten im Snapshot.
+2. **EAN-Kamerascanner:** BarcodeDetector mit Rückkamera unter HTTPS/localhost und manueller EAN-Eingabe, wenn der Browser die Erkennung nicht unterstützt.
+3. **KI-Autofreigabe:** Standard aus, pro sicherem Feld konfigurierbar; nur serverseitig geprüfte `primary`-/`strong`-Belege. Texte/Tags/Widersprüche bleiben zur manuellen Freigabe.
+4. **Vollständiges ZIP-Backup + sicher vorgemerkter Restore:** SQLite, Originalbilder/PDFs, Einstellungen und Import-Historie inklusive SHA-256-Manifest; für die Restore-Aktivierung müssen App und Worker gemeinsam neu gestartet werden. `BACKUP_RESTORE_TOKEN` (min. 20 Zeichen) erforderlich; Snapshots werden zuerst vollständig geprüft, dann Sicherheitsbackup vor Aktivierung.
+5. **Systemdiagnose:** BGG-Token, Datenbank/Schema, Anhänge, freier Speicher, letzter ZIP-Backup-Zeitpunkt und Restore-Vormerkung zusätzlich zu Ollama, SearXNG, Worker und CORS.
+
+**Migration:** Die SQLite-Schema-Version bleibt 11, das JSON-Backup-Format bleibt v5, der Pages/IndexedDB-Speicher migriert nicht-destruktiv auf Version 4. Service-Worker-Cache: `brettspielregal-pwa-v9-1-0`.
+
+**Einschränkungen:** BarcodeDetector wird nicht von allen iPhone-/Safari-Versionen angeboten (manuelle Eingabe bleibt möglich). Offline-Cover sind nur im Snapshot gespeicherte **eigene** Cover. Externe Cover-URLs werden nicht heimlich geladen oder offline kopiert. Ein Restore überschreibt den Serverbestand erst nach dem gemeinsamen Stack-Neustart; davor ein externes Backup behalten.
+
+Siehe `PORTAINER_SETUP.md` für Deployment und Restore-Schritte.
+
+---
+
 # Brettspielregal – Docker Fullstack v9.0.0
 
 ## Neu in v9.0.0 – Alltagstaugliches Brettspielregal

@@ -1,260 +1,46 @@
-# Portainer Stack – Brettspielregal v9.0.0
+# Brettspielregal v9.1.1 – Portainer
 
-Diese Anleitung ist für die bestehende Installation auf `192.168.1.127:8190` vorbereitet.
+**Update von v9.1.0:** Nur die Benutzeroberfläche wurde neu strukturiert; dieselbe SQLite-Datenbank und dieselben `/app/data`-Volumes weiterverwenden. Keine neuen Environment-Variablen, keine Migration und kein weiterer Dienst nötig. Docker und Pages möglichst gemeinsam auf v9.1.1 aktualisieren; auf dem iPhone die PWA anschließend einmal neu öffnen, damit `brettspielregal-pwa-v9-1-1` geladen wird.
 
-## Vorher
+# Brettspielregal v9.1 – Portainer Deployment
 
-Auf dem Ollama-Host müssen die Modelle vorhanden sein:
+## Update von v9.0
 
-```bash
-ollama pull qwen3:14b
-ollama pull gemma3:12b
-ollama list
+1. **Vor dem Update** den bestehenden JSON-Export erstellen und eine Kopie deines `/app/data`-Volumes sichern.
+2. Docker-v9.1-Dateien ins vorhandene Git-Repository übertragen und den Stack über Portainer neu deployen. Die Volumes **nicht löschen**.
+3. GitHub-Pages-v9.1-Dateien ins Pages-Repository übertragen, falls Pages verwendet wird.
+4. Auf dem iPhone die PWA schließen und neu öffnen. Der Cache-Key wurde auf `brettspielregal-pwa-v9-1-1` geändert.
+
+## Neue Einstellungen
+
+Die fünf Funktionen erfordern für den normalen Betrieb **keine neuen Pflichtvariablen**. `FULL_BACKUP_KEEP` begrenzt vollständige manuelle ZIP-Backups standardmäßig auf die fünf neuesten Archive; spezielle `before-restore-*`-Sicherungen werden dadurch nicht gelöscht. Für einen **vollständigen ZIP-Restore** ist ein eigener Admin-Schlüssel erforderlich:
+
+```env
+BACKUP_RESTORE_TOKEN=<mindestens-20-zufaellige-Zeichen>
 ```
 
-In Portainer unter **Stack → Environment variables** müssen gesetzt sein:
+Diesen Wert unter **Portainer → Stack → Environment variables** setzen. Nicht als Schlüssel in Git committen und nicht im Frontend speichern. Die App fragt ihn vor dem Restore einmalig ab; HTTPS bzw. ein vertrauenswürdiges LAN verwenden.
 
-```text
-SECRET_KEY      = dein bisheriger Brettspielregal-Schlüssel
-SEARXNG_SECRET  = ein langer zufälliger Schlüssel
-```
+Vorhandene Werte `SECRET_KEY`, `SEARXNG_SECRET`, `PWA_ALLOWED_ORIGINS`, `BGG_API_TOKEN` nicht versehentlich löschen oder ändern.
 
-Optional:
+## Vollständiges ZIP-Backup
 
-```text
-BGG_API_TOKEN   = dein BoardGameGeek Application Token (für strukturierte BGG-Daten)
-```
+Unter **Setup → Vollständiges ZIP-Backup und Restore → ZIP erstellen** herunterladen. Das Archiv enthält `database.sqlite` (Spiele, Importwarteschlange, App-/Recherche-Einstellungen), `attachments/` (Original-Cover und PDFs) und `manifest.json` mit SHA-256-Prüfsummen. Generierte WebP-Thumbnails werden nach einem Restore bei Bedarf neu erstellt.
 
-Den vorhandenen `SECRET_KEY` nicht ändern. BoardGameGeek verlangt für die XML-API inzwischen Registrierung und einen Bearer/Application-Token. Wenn `BGG_API_TOKEN` leer bleibt, funktioniert Brettspielregal weiter; nur die strukturierte BGG-Identifikation wird übersprungen und die Recherche nutzt Herstellerseiten/SearXNG.
+**ZIP-Restore:** ZIP auswählen, Admin-Schlüssel eingeben, `RESTORE` bestätigen. Der Upload wird geprüft und als `/app/data/restore-pending.zip` gespeichert. Die laufende Datenbank bleibt unverändert. **Danach den ganzen Stack (App UND Worker) anhalten und gemeinsam neu starten.** Beim Start verarbeitet genau ein Container die ZIP unter einer Dateisperre, erstellt zuerst `/app/data/backups/before-restore-*.zip`, stellt SQLite und Original-Anhänge wieder her und startet erst dann App bzw. Worker. Nicht nur einen einzelnen Container mit aktivem Worker neu starten.
 
-## Web Editor
+Auch die bestehenden JSON-v5-Backups und Docker-/Pages-Übertragungen bleiben erhalten. Secrets/Portainer-Umgebungsvariablen sind nicht im ZIP.
 
-In **Stacks → Brettspielregal → Web editor** den Stack durch `portainer-stack-v9.0.0.yml` ersetzen oder folgenden Inhalt einfügen:
+## Offline-Regal
 
-```yaml
-x-app-build: &app-build
-  context: https://github.com/Ashguard85/Regal-docker.git#main
+Im Server-Modus unter **Setup → Offline-Regal** bewusst eine Momentaufnahme anlegen. Eigene Cover werden lokal in IndexedDB gespeichert. Der lokale Pages-Datenmodus und dessen Datenbank bleiben davon getrennt. Ohne Netzwerk werden nur Lesefunktionen angeboten. Bei wiederhergestellter Verbindung unter Setup **Wieder verbinden** wählen.
 
-x-app-environment: &app-environment
-  APP_TITLE: "Brettspielregal"
-  APP_URL: "${APP_URL:-http://192.168.1.127:8190}"
-  SECRET_KEY: "${SECRET_KEY}"
-  PWA_ALLOWED_ORIGINS: "${PWA_ALLOWED_ORIGINS:-https://ashguard85.github.io,http://192.168.1.127:8190}"
-  BACKUP_KEEP: "50"
+## Kamera/EAN
 
-  AI_IMPORT_ENABLED: "true"
-  AI_PROVIDER: "ollama"
-  OLLAMA_BASE_URL: "http://host.docker.internal:11434"
-  OLLAMA_TEXT_MODEL: "qwen3:14b"
-  OLLAMA_VISION_MODEL: "gemma3:12b"
-  OLLAMA_TIMEOUT_SECONDS: "600"
-  AI_MAX_PAGE_CHARS: "16000"
+Die automatische Barcode-Erkennung benötigt HTTPS oder localhost, eine Kameraerlaubnis und `BarcodeDetector` im Browser. Bei fehlender Browserunterstützung die EAN im Kameradialog eintippen. Die Kamera wird beim Schließen des Dialogs gestoppt.
 
-  RULE_SEARCH_PROVIDER: "none"
-  WEB_FALLBACK_PROVIDER: "none"
+## KI-Regeln und Diagnose
 
-  AUTO_ENRICH_ENABLED: "true"
-  AUTO_ENRICH_NEW_GAMES: "true"
-  AUTO_ENRICH_POLL_SECONDS: "5"
-  AUTO_ENRICH_JOB_TIMEOUT_SECONDS: "900"
-  AUTO_ENRICH_STUCK_MINUTES: "10"
-  AUTO_SEARCH_PROVIDER: "searxng"
-  SEARXNG_BASE_URL: "http://searxng:8080"
-  AUTO_SEARCH_RESULTS: "8"
-  BGG_ENABLED: "true"
-  BGG_API_TOKEN: "${BGG_API_TOKEN:-}"
-  BGG_TIMEOUT_SECONDS: "15"
-  BGG_MIN_INTERVAL_SECONDS: "5"
-  AUTO_FETCH_PAGES: "3"
-  AUTO_RESEARCH_MAX_CHARS: "24000"
+**Setup → KI-Feldfreigabe**: Standard aus; nach Aktivierung nur explizit gewählte, serverseitig direkt belegte Felder. Keine Beschreibung, Tags, Regeln oder Widersprüche automatisch.
 
-services:
-  app:
-    image: brettspielregal:local
-    pull_policy: build
-    build: *app-build
-    ports:
-      - "8190:8080"
-    volumes:
-      - /home/buebi/docker/brettspielregal/data:/app/data
-      - /home/buebi/docker/brettspielregal/backups:/app/data/backups
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment: *app-environment
-    labels:
-      homepage.group: "Spiele"
-      homepage.name: "Brettspielregal"
-      homepage.href: "http://192.168.1.127:8190"
-      homepage.description: "Meine Brettspielsammlung"
-      homepage.showStats: "true"
-    depends_on:
-      - searxng
-    restart: unless-stopped
-
-  worker:
-    image: brettspielregal:local
-    pull_policy: build
-    build: *app-build
-    command:
-      - /bin/sh
-      - -c
-      - |
-        echo "[worker] Brettspielregal Hintergrund-Worker gestartet"
-        exec python -m app.import_worker
-    healthcheck:
-      disable: true
-    volumes:
-      - /home/buebi/docker/brettspielregal/data:/app/data
-      - /home/buebi/docker/brettspielregal/backups:/app/data/backups
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      <<: *app-environment
-      PYTHONUNBUFFERED: "1"
-    depends_on:
-      - searxng
-    restart: unless-stopped
-
-  searxng:
-    image: docker.io/searxng/searxng:latest
-    environment:
-      SEARXNG_SECRET: "${SEARXNG_SECRET}"
-    configs:
-      - source: searxng_settings
-        target: /etc/searxng/settings.yml
-    volumes:
-      - searxng_cache:/var/cache/searxng
-    restart: unless-stopped
-
-configs:
-  searxng_settings:
-    content: |
-      use_default_settings: true
-
-      general:
-        debug: false
-        instance_name: "Brettspielregal Search"
-
-      search:
-        safe_search: 0
-        default_lang: "de"
-        formats:
-          - html
-          - json
-
-      server:
-        secret_key: "${SEARXNG_SECRET}"
-        limiter: false
-        image_proxy: true
-
-volumes:
-  searxng_cache:
-```
-
-Danach **Update the stack**.
-
-## Erwartete Container
-
-- `app` – Web-App/API
-- `worker` – Hintergrund-Import
-- `searxng` – interne Websuche ohne veröffentlichten Port
-
-Der Worker besitzt bewusst `healthcheck: disable: true`, weil er keinen HTTP-Server auf Port 8080 betreibt. `PYTHONUNBUFFERED=1` und die Startmeldung sorgen für sichtbare Logs in Portainer.
-
-
-## v9.0.0 – Cover-/Anhang-Hotfix
-
-Für v9.0.0 sind **keine neuen Environment-Variablen** nötig. Eigene Bilder werden in der Detailansicht sofort geladen, das erste hochgeladene Bild wird explizit als Cover gespeichert und ältere implizite Cover-Zuordnungen werden beim Datenbankstart einmalig repariert.
-
-## v8.8.0 – automatische Quellenklassifizierung
-
-Nach dem erfolgreichen Abruf bewertet der Worker den **echten Seiteninhalt** ein zweites Mal. Dadurch kann eine bisher unbekannte Verlagsdomain automatisch als offizielle Quelle erkannt werden, wenn Domain/Verlagsidentität und Seiteninhalt zusammenpassen.
-
-Beispiel `Scythe`: `feuerland-spiele.de` wird durch die erkannte Feuerland-Verlagsidentität, konkrete Spieldaten und Regel-Downloads als offizielle Verlagsseite hochgestuft; Wikipedia bleibt eine allgemeine Referenzquelle. Reviews/Tests und reine Shops werden nach dem Abruf erneut herabgestuft.
-
-Der Worker darf dafür bis zu einige zusätzliche Kandidaten abrufen, gibt aber weiterhin nur die besten `AUTO_FETCH_PAGES` Quellen an Ollama weiter. Es ist keine neue Portainer-Variable nötig.
-
-## v8.7.2 – robustere Webrecherche
-
-Die Suche läuft jetzt gestuft: zuerst deutsch, bei zu wenigen belastbaren Kandidaten automatisch mehrsprachig (`language=all`). Kurze Titel wie `Scythe` werden zusätzlich mit einfachen, unquoted Suchbegriffen gesucht. Blockierte Produktseiten führen nicht sofort zum Abbruch; der Worker probiert weitere Kandidaten.
-
-Ein gültiger `BGG_API_TOKEN` bleibt empfohlen: gelingt die strukturierte BGG-Identifikation, kann der Worker auch bei einer leeren oder vorübergehend gestörten SearXNG-Suche bis zu Ollama weiterarbeiten. Ohne Token kann eine über SearXNG gefundene öffentliche BGG-Spielseite weiterhin als Web-Referenz dienen.
-
-SearXNG-Diagnosen unterscheiden nun zwischen 0 Roh-Treffern, verworfenen unsicheren URLs, nicht antwortenden Engines, zu schwachen Kandidaten und Seiten-Abruffehlern.
-
-## v8.7 – bessere Webrecherche
-
-- `BGG_ENABLED=true` aktiviert die strukturierte BoardGameGeek-Referenz.
-- SearXNG dient nur noch zur URL-Findung. Such-Snippets werden nicht als Fakten an Qwen weitergereicht.
-- `AUTO_FETCH_PAGES=3` begrenzt die normalen Webseiten; zusammen mit BGG erhält Ollama maximal vier ausgewählte Quellen.
-- `AUTO_RESEARCH_MAX_CHARS=24000` hält das Recherchebundle kompakt.
-- Bei BGG-Ausfall arbeitet die Suche mit Hersteller-/Verlagsseiten weiter; der Job scheitert nicht allein deshalb.
-
-## v8.5.3 – hängende Jobs
-
-Bei einem laufenden Auftrag erscheint im Import-Tab **Abbrechen**. Der Worker führt jeden Job in einem eigenen Unterprozess aus und kann dadurch auch einen blockierten Web-/Ollama-Aufruf beenden.
-
-Falls ein Auftrag länger als `AUTO_ENRICH_STUCK_MINUTES` keinen Fortschritt zeigt oder eine Abbruchanforderung nicht sauber abgeschlossen wird, bietet die Oberfläche **Hängenden Auftrag freigeben** an. Das Spiel bleibt erhalten; nur der Queue-Auftrag und seine temporären KI-Vorschläge werden verworfen.
-
-`AUTO_ENRICH_JOB_TIMEOUT_SECONDS` ist ein zusätzliches Sicherheitsnetz für die maximale Gesamtlaufzeit eines einzelnen Jobs. Standard sind 900 Sekunden.
-
-
-## v8.5 Bedienung
-
-- **Sammlung**: nur Spiele, Suche und Listen-/Regalansicht. Der **Lagerort** ist sichtbar und durchsuchbar.
-- **Import**: Schnellerfassung, optional ein Lagerort für die ganze Charge, Workerstatus und KI-Vorschläge.
-- Das Spiel erscheint sofort in der Sammlung. Der Worker schreibt Rechercheergebnisse **nicht** direkt in die freigegebenen Felder.
-- Bei **Vorschläge prüfen** siehst du je Feld **Aktuell** und **KI-Vorschlag** und kannst einzeln **Übernehmen**, **Verwerfen** oder **Alle Vorschläge übernehmen**.
-- **Setup**: Verbindung, Ollama, Quellen, Prompt, Backup und Betriebsmodus.
-
-## Quellen und Prompt konfigurieren
-
-Nach dem Start in Brettspielregal unter **Setup → Automatische Recherche – Quellen & Prompt**.
-
-Dort gibt es:
-
-- **Primärquellen** – Hersteller/Verlage
-- **Strukturierte Referenzquellen** – standardmäßig `boardgamegeek.com`
-- **Niedrig priorisierte Quellen** – Reviews/Händler
-- System-Prompt und Recherche-Prompt
-
-Alle frei formulierten KI-Werte sollen auf Deutsch gespeichert werden. BoardGameGeek darf als englische Referenz dienen, wird aber vor der Übernahme durch Qwen auf deutsche Beschreibungen/Tags normalisiert. Technische Werte wie Ollama-URL, Modelle und Timeouts bleiben in Portainer.
-
-Ein bereits gespeicherter eigener Prompt wird nicht überschrieben. v8.8 hängt die neue verbindliche Quellenregel automatisch an alte Prompts an. Für den vollständigen neuen Standard kannst du optional **Auf Standard zurücksetzen** wählen. Siehe `OLLAMA_PROMPT_V8.8.md`.
-
-
-## GitHub Pages und mehrere erlaubte Origins
-
-Für v8.7 wird die Mehrfachvariable verwendet:
-
-```yaml
-PWA_ALLOWED_ORIGINS: "https://ashguard85.github.io,http://192.168.1.127:8190"
-```
-
-Bei einer eigenen Pages-Domain trägst du deren **Origin** zusätzlich ein, ohne Pfad, z. B. `https://spiele.example.ch`. Ein GitHub-Pages-Projektpfad wie `/brettspielregal/` gehört nicht in die Origin.
-
-Die lokale Docker-Seite auf `http://192.168.1.127:8190` greift same-origin auf die API zu und braucht CORS technisch nicht; der Eintrag schadet jedoch nicht und erleichtert spätere getrennte lokale Frontends.
-
-Für GitHub Pages muss die Backend-URL eine öffentliche HTTPS-Adresse des Reverse Proxys sein. Ollama und SearXNG bleiben intern und werden nicht öffentlich freigegeben.
-
-
-## v8.8 – Feldbelege und Schnellfreigabe
-
-Für v8.8 sind **keine neuen Environment-Variablen** nötig. Die Feldbelege werden aus den bereits geladenen Quellen berechnet und in SQLite gespeichert. Bestehende offene Vorschläge aus v8.7.x erhalten nicht rückwirkend belastbare Belege; dafür das Spiel einmal **Neu recherchieren**.
-
-
-## v9.0.0 – Cover in der Sammlung
-
-Keine neuen Environment-Variablen nötig. Der Fix betrifft ausschließlich das Frontend-Laden eigener Cover in der Sammlungsübersicht und die Vermeidung unnötiger Re-Renders beim Queue-Polling.
-
-
-## v9.0.0 – Eigene Cover im Regal
-
-Für v9.0.0 sind **keine neuen Environment-Variablen** nötig. Im lokalen Docker-/Same-Origin-Betrieb werden eigene Cover direkt über den bestehenden Attachment-Endpunkt als Bild geladen. Dadurch entfällt in der Sammlungsübersicht die bisherige Blob-/IntersectionObserver-Abhängigkeit.
-
-
-## Update auf v9.0.0
-
-Im **Portainer Web Editor** den bestehenden Stack weiterverwenden. Im Git-Repository die neuen v9.0.0-Dateien hochladen und das Deployment neu bauen. `SECRET_KEY`, die Host-Mounts für `/app/data` und `/app/data/backups`, SearXNG sowie Ollama bleiben unverändert. Vor dem Update über die App ein JSON-Backup exportieren und extern sichern. SQLite wird beim Start auf Schema 11 migriert. Die UI unter `/` und der GitHub-Pages-Build sind unabhängig nutzbar.
-
-Bei lokalen externen Bildern/PDFs wird maximal 10 MB pro Datei akzeptiert. Downloads können bei 403 oder CORS scheitern; dann Originaldatei manuell hochladen. Ein BGG-API-Token ist optional.
+**Setup → Verbindung / Server** zeigt zusätzlich BGG-Token-Status, SQLite-Schema und -Zustand, Anhänge, freien Speicher, letztes vollständiges ZIP-Backup und ggf. einen vorgemerkten Restore.

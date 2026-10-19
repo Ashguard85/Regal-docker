@@ -765,6 +765,40 @@ def apply_import_suggestions(job_id, fields=None):
         return {"game": normalized, "applied": applied, "pending": pending}
 
 
+AUTO_APPROVE_FIELDS = {"min_players", "max_players", "play_time_min", "min_age", "year", "designer", "publisher", "ean", "bgg_id"}
+
+
+def get_auto_approval_settings():
+    stored = get_app_settings(["ai_auto_approve_enabled", "ai_auto_approve_fields"])
+    try: fields = json.loads(stored.get("ai_auto_approve_fields") or "[]")
+    except (ValueError, TypeError): fields = []
+    if not isinstance(fields, list): fields = []
+    return {"enabled": stored.get("ai_auto_approve_enabled") == "true", "fields": sorted(set(fields) & AUTO_APPROVE_FIELDS), "allowed_fields": sorted(AUTO_APPROVE_FIELDS)}
+
+
+def save_auto_approval_settings(data):
+    if not isinstance(data, dict) or type(data.get("enabled")) is not bool or not isinstance(data.get("fields"), list):
+        raise ValueError("Ungültige KI-Freigabe-Einstellungen.")
+    fields = data["fields"]
+    if len(fields) > len(AUTO_APPROVE_FIELDS) or any(not isinstance(f, str) or f not in AUTO_APPROVE_FIELDS for f in fields):
+        raise ValueError("Nicht freigabefähiges Feld ausgewählt.")
+    set_app_setting("ai_auto_approve_fields", json.dumps(sorted(set(fields))))
+    set_app_setting("ai_auto_approve_enabled", "true" if data["enabled"] else "false")
+    return get_auto_approval_settings()
+
+
+def auto_approve_import_suggestions(job_id):
+    prefs = get_auto_approval_settings()
+    if not prefs["enabled"] or not prefs["fields"]: return {"applied": [], "pending": None}
+    with connect() as conn:
+        row = conn.execute("SELECT status,cancel_requested FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row or row["status"] != "review" or row["cancel_requested"]: return {"applied": [], "pending": None}
+        suggestions = conn.execute("SELECT * FROM import_suggestions WHERE job_id=? AND status='pending'", (job_id,)).fetchall()
+        fields = [s["field"] for s in suggestions if s["field"] in prefs["fields"] and bool((_suggestion_row(s).get("evidence") or {}).get("safe_to_apply")) and (_suggestion_row(s).get("evidence") or {}).get("level") in {"primary", "strong"}]
+    if not fields: return {"applied": [], "pending": len(suggestions)}
+    return apply_import_suggestions(job_id, fields)
+
+
 def apply_safe_import_suggestions(job_id):
     """Apply only pending proposals that backend evidence marked safe for bulk approval."""
     with connect() as conn:

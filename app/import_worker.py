@@ -1,3 +1,4 @@
+import fcntl
 import multiprocessing
 import os
 import signal
@@ -143,6 +144,8 @@ def process_job(job):
     if suggestion_count:
         progress = f"{suggestion_count} KI-Vorschlag{' ist' if suggestion_count == 1 else 'e sind'} zur Prüfung bereit"
         db.update_import_job(job_id, status="review", progress=progress, error="", warnings=warnings, sources=research["sources"], research=research.get("research") or {}, finished=True)
+        if not _job_cancelled(job_id):
+            db.auto_approve_import_suggestions(job_id)
         _set_message(f"Vorschläge bereit ({suggestion_count}): {game.get('title') or job['query']}")
     else:
         progress = "Recherche abgeschlossen – keine neuen Angaben gefunden"
@@ -236,6 +239,11 @@ def _run_claimed_job(job):
 
 
 def run():
+    # Keep a shared lock for the worker lifetime. Full ZIP restore needs an
+    # exclusive lock at container startup, so it waits until old worker stops.
+    db.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    restore_guard = open(db.DATA_DIR / "restore.lock", "a+b")
+    fcntl.flock(restore_guard, fcntl.LOCK_SH)
     db.init_db()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)

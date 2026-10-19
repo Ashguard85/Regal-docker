@@ -138,6 +138,11 @@ Dorfromantik"></textarea></label>
               <div class="diagnostic-row"><span>Ollama / KI</span><strong id="diagOllama" class="diagnostic-state neutral">Nicht geprüft</strong></div>
               <div class="diagnostic-row"><span>SearXNG</span><strong id="diagSearxng" class="diagnostic-state neutral">Nicht geprüft</strong></div>
               <div class="diagnostic-row"><span>CORS</span><strong id="diagCors" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>BGG API</span><strong id="diagBgg" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>SQLite / Schema</span><strong id="diagSqlite" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Anhänge</span><strong id="diagFiles" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Freier Speicher</span><strong id="diagDisk" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Letztes ZIP-Backup</span><strong id="diagBackup" class="diagnostic-state neutral">Nicht geprüft</strong></div>
             </div>
             <p id="diagnosticHint" class="hint"></p>
           </div>
@@ -198,6 +203,29 @@ amazon.de"></textarea>
           <button id="renameLocationButton" class="button" type="button">Lagerort bei allen Spielen umbenennen</button>
         </div></details>
 
+        <details><summary>Offline-Regal (schreibgeschützt)</summary><div class="details-body stack">
+          <p>Speichere bewusst eine lokale Momentaufnahme deiner Server-Sammlung samt eigenen Coverbildern auf diesem Gerät. Ohne Verbindung kannst du Spiele und Lagerorte ansehen, aber nichts verändern. Kein automatischer Datenabgleich.</p>
+          <p id="offlineSnapshotStatus" class="hint">Noch keine Momentaufnahme geprüft.</p>
+          <div class="button-row"><button id="saveOfflineSnapshotButton" type="button" class="button primary">Offline-Regal aktualisieren</button><button id="reconnectServerButton" type="button" class="button">Wieder verbinden</button><button id="deleteOfflineSnapshotButton" type="button" class="button subtle">Offline-Daten löschen</button></div>
+        </div></details>
+
+        <details><summary>KI-Feldfreigabe</summary><div class="details-body stack">
+          <p class="hint">Standardmäßig aus. Bei Aktivierung übernimmt der Worker nur angekreuzte Felder, die über eine Primärquelle oder mindestens zwei übereinstimmende Quellen eindeutig belegt sind. Widersprüche und KI-Texte bleiben immer zur Prüfung.</p>
+          <label class="research-toggle"><input id="aiApprovalEnabled" type="checkbox"><span><strong>Automatische Freigabe aktivieren</strong></span></label>
+          <div id="aiApprovalFields" class="auto-approval-grid"></div>
+          <button id="saveAiApprovalButton" type="button" class="button primary">Freigaberegeln speichern</button>
+          <p id="aiApprovalStatus" class="hint" role="status"></p>
+        </div></details>
+
+        <details><summary>Vollständiges ZIP-Backup und Restore</summary><div class="details-body stack">
+          <p>Enthält SQLite mit Einstellungen und KI-Historie sowie alle Originalbilder und PDF-Dateien. Keine Umgebungsvariablen, Passwörter oder Cloudflare-Tokens.</p>
+          <button id="downloadFullZipButton" type="button" class="button primary">Vollständiges ZIP-Backup erstellen</button>
+          <label>ZIP für Wiederherstellung auswählen<input id="fullZipRestoreFile" type="file" accept=".zip,application/zip"></label>
+          <label>Restore-Schlüssel aus Portainer<input id="fullRestoreToken" type="password" autocomplete="off" placeholder="BACKUP_RESTORE_TOKEN (mind. 20 Zeichen)"></label>
+          <button id="stageFullRestoreButton" type="button" class="button">ZIP prüfen und Restore vormerken</button>
+          <p id="fullBackupStatus" class="hint" role="status">Restore überschreibt noch nichts: Erst nach dem gemeinsamen Neustart von App und Worker wird die geprüfte ZIP aktiviert. Davor wird eine weitere Sicherheitskopie erstellt.</p>
+        </div></details>
+
         <details><summary>Import / Export</summary><div class="details-body stack">
           <button id="exportButton" class="button">Backup exportieren</button>
           <label class="button file-button">Backup importieren<input id="importInput" type="file" accept="application/json,.json"></label>
@@ -205,7 +233,7 @@ amazon.de"></textarea>
             <button id="localToServerButton" class="button">Lokale Daten auf Server übertragen</button>
             <button id="serverToLocalButton" class="button">Serverdaten lokal übernehmen</button>
           </div>
-          <p class="hint">Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 3, einschließlich hochgeladener Bilder und PDF-Anleitungen. Ältere Backups bleiben importierbar. Bei vielen Anhängen kann die JSON-Datei groß werden. Zugangsdaten sind nie enthalten.</p>
+          <p class="hint">JSON-Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 5, einschließlich hochgeladener Bilder und PDF-Anleitungen. Ältere Backups bleiben importierbar. Bei vielen Anhängen kann die JSON-Datei groß werden. Zugangsdaten sind nie enthalten.</p>
         </div></details>
 
         <details><summary>Sicherheit & lokale Daten</summary><div class="details-body">
@@ -213,7 +241,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.1.1</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -229,18 +257,34 @@ amazon.de"></textarea>
     <label class="full">Lagerort<input id="quickAddLocation" list="knownLocations" maxlength="180" placeholder="Wohnzimmer / 1. Tablar"></label>
     <label class="full research-toggle"><input type="checkbox" id="quickAddAi" checked> Im Hintergrund mit KI ergänzen (nur Server)</label>
     <div class="full button-row"><button class="button primary" type="submit">Sofort zur Sammlung hinzufügen</button></div></form>
-    <div class="quick-add-options"><button id="quickAddLink" class="button" type="button">🔗 Über Link</button><button id="quickAddPhoto" class="button" type="button">📷 Foto hinzufügen</button></div></div></dialog>
+    <div class="quick-add-options"><button id="quickAddLink" class="button" type="button">🔗 Über Link</button><button id="quickAddPhoto" class="button" type="button">📷 Foto hinzufügen</button><button id="openScannerButton" class="button primary" type="button">▥ EAN scannen</button></div></div></dialog>
 
-  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><button id="archiveCoverButton" type="button" class="button">Cover lokal archivieren</button><button id="archiveRulesButton" type="button" class="button">PDF lokal archivieren</button><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><span class="spacer"></span><button id="detailApproveButton" type="button" class="button approve hidden">✓ Alle Vorschläge übernehmen</button><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
+  <dialog id="barcodeDialog" class="dialog"><div class="dialog-card compact">
+    <div class="dialog-head"><h2>EAN mit Kamera scannen</h2><button id="closeBarcode" type="button" class="icon-button" aria-label="Schließen">×</button></div>
+    <video id="barcodeVideo" autoplay muted playsinline class="barcode-video" aria-label="Kamerabild für Barcode-Erkennung"></video>
+    <p id="barcodeStatus" class="hint" role="status">Kamera wird gestartet …</p>
+    <label>EAN manuell eingeben<input id="barcodeManual" inputmode="numeric" pattern="[0-9]{8,14}" maxlength="14" placeholder="8, 12, 13 oder 14 Ziffern"></label>
+    <button type="button" id="barcodeUseManual" class="button primary">EAN übernehmen</button>
+    <p class="hint">Die Kamera benötigt HTTPS oder localhost und einen Browser mit BarcodeDetector. Ohne Unterstützung funktioniert die manuelle Eingabe.</p>
+  </div></dialog>
+
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions detail-readonly-actions"><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 
   <dialog id="gameDialog" class="dialog">
     <form id="gameForm" method="dialog" class="dialog-card">
       <div class="dialog-head"><div><p class="eyebrow">Brettspiel</p><h2 id="gameDialogTitle">Spiel erfassen</h2></div><button id="closeGameDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div>
       <input id="gameId" type="hidden">
+      <details id="editAdvancedTools" class="edit-tools hidden">
+        <summary>Recherche, Cover & KI verwalten</summary>
+        <p class="hint">Diese Aktionen sind nur im Bearbeitungsmodus sichtbar. Neue Links zuerst über „Speichern“ sichern, bevor du sie lokal archivierst.</p>
+        <div class="edit-tools-buttons"><button id="archiveCoverButton" type="button" class="button hidden">Cover lokal archivieren</button><button id="archiveRulesButton" type="button" class="button hidden">PDF lokal archivieren</button><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><button id="detailApproveButton" type="button" class="button approve hidden">✓ Alle Vorschläge übernehmen</button></div>
+        <p id="editActionStatus" class="hint" role="status"></p>
+        <div id="editReviewPanel"></div>
+      </details>
       <div class="form-grid">
         <label class="full">Titel *<input id="titleInput" required maxlength="180"></label>
         <label class="full">Quell-Link<input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://…"></label>
-        <label id="newGameResearchRow" class="full research-toggle hidden"><input id="newGameAutoEnrich" type="checkbox" checked><span><strong>Nach dem Speichern mit KI recherchieren</strong><small>Aus: Das Spiel wird nur gespeichert. Du kannst die Recherche später jederzeit in der Detailansicht starten.</small></span></label>
+        <label id="newGameResearchRow" class="full research-toggle hidden"><input id="newGameAutoEnrich" type="checkbox" checked><span><strong>Nach dem Speichern mit KI recherchieren</strong><small>Aus: Das Spiel wird nur gespeichert. Du kannst die Recherche später unter „Bearbeiten“ starten.</small></span></label>
         <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="aiImageButton" type="button" class="button">Screenshot auslesen</button><input id="aiImageInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Text/Link: Qwen · Screenshot/Bild: Gemma Vision · maximal 4 Bilder</span></div>
         <label class="full">Beschreibung<textarea id="descriptionInput" rows="4" maxlength="6000"></textarea></label>
         <label>Spieler min.<input id="minPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>

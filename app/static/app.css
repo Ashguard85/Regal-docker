@@ -676,3 +676,23 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 .quick-add-options>*{flex:1;min-width:115px}
 @media(max-width:380px){.advanced-filter-grid{grid-template-columns:1fr}.quick-add-fab{width:52px;height:52px}}
 @media(min-width:850px){.quick-add-fab{right:28px;bottom:30px}}
+
+/* v9.1: EAN-Scanner, sicherer Offline-Lesemodus, KI-Regelkontrollen */
+.barcode-video{display:block;width:100%;min-height:160px;max-height:280px;object-fit:cover;background:#14251d;border-radius:14px;margin:8px 0 10px}
+.auto-approval-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.auto-approval-grid label{display:flex;align-items:center;gap:8px;font-size:.88rem;min-height:42px;border:1px solid var(--line,#d8dfd9);border-radius:10px;padding:7px 9px}
+.offline-read-only #quickAddFab,.offline-read-only #addGameButton,.offline-read-only #emptyAddButton,.offline-read-only #detailEditButton,.offline-read-only #detailApproveButton,.offline-read-only #detailReEnrichButton,.offline-read-only #archiveCoverButton,.offline-read-only #archiveRulesButton,.offline-read-only .detail-dialog-card .file-button,.offline-read-only #viewImport .import-card{display:none!important}
+.offline-read-only [data-apply-suggestion],.offline-read-only [data-reject-suggestion],.offline-read-only [data-apply-safe-suggestions],.offline-read-only [data-reject-all-suggestions]{display:none!important}
+@media(max-width:480px){.barcode-video{min-height:200px}.auto-approval-grid{grid-template-columns:1fr 1fr}.auto-approval-grid label{font-size:.78rem}}
+
+/* v9.1.1 – klare Trennung zwischen Spielansicht und Bearbeiten */
+.edit-tools { margin: 14px 0; padding: 14px; border: 1px solid var(--border); border-radius: 16px; background: #f4f7f3; }
+.edit-tools > summary { cursor:pointer; font-weight:750; font-size:.92rem; }
+.edit-tools[open] > summary { margin-bottom:10px; }
+.edit-tools-buttons { display:flex; flex-wrap:wrap; gap:8px; margin: 12px 0; }
+.edit-tools-buttons .button { flex:1 1 175px; }
+.edit-tools .review-panel { margin-top:12px; }
+.edit-attachment-actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+.edit-attachment-actions .button { min-height:35px; padding:7px 9px; }
+.review-readonly-hint { color:var(--muted); font-size:.86rem; margin:0; padding:11px 12px; background:#f2f5f1; border-radius:12px; border:1px solid var(--border); }
+@media(max-width:560px) { .edit-attachment-actions { width:100%; justify-content:flex-start; } .attachment-editor .attachment-row { flex-wrap:wrap; } .edit-tools-buttons .button { flex:1 1 100%; } }

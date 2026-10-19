@@ -1,7 +1,7 @@
-import {LocalProvider,ServerProvider,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
+import {LocalProvider,ServerProvider,OfflineProvider,createOfflineSnapshot,readOfflineSnapshot,clearOfflineSnapshot,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.0.0",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.1",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -15,6 +15,118 @@ const DEFAULT_TAG_CATALOG={
 let tagCatalog=DEFAULT_TAG_CATALOG;
 let selectedTagFilters=new Set((()=>{try{const v=JSON.parse(localStorage.getItem("brettspielregal-tag-filters")||"[]");return Array.isArray(v)?v:[];}catch{return [];}})());
 
+let scannerStream=null,scanTimeout=null,scanInProgress=false;
+const offlineReadOnly=()=>provider?.kind==="offline";
+function updateOfflineUi(){
+  document.body.classList.toggle("offline-read-only",offlineReadOnly());
+  if(offlineReadOnly()){
+    $("modeBadge").textContent="Offline · nur lesen";
+    $("quickCaptureInput").disabled=true;$("submitQuickCaptureButton").disabled=true;
+    showBanner("Offline-Regal: gespeicherte Momentaufnahme, nur Lesen. Unter Setup kannst du die Verbindung wiederherstellen.");
+  }
+}
+async function updateOfflineStatus(){
+  const snapshot=await readOfflineSnapshot();
+  $("offlineSnapshotStatus").textContent=snapshot.meta?`${snapshot.meta.games} Spiele, ${snapshot.meta.covers} Cover · Stand ${new Date(snapshot.meta.saved_at).toLocaleString("de-CH")}`:"Noch keine Offline-Momentaufnahme auf diesem Gerät.";
+  $("saveOfflineSnapshotButton").disabled=currentMode!=="server"||offlineReadOnly();
+}
+async function saveOfflineShelf(){
+  if(currentMode!=="server"||offlineReadOnly()){showMessage("Server nötig","Offline-Momentaufnahmen können nur im verbundenen Server-Modus erstellt werden.");return;}
+  const b=$("saveOfflineSnapshotButton");setBusy(b,true,"Speichere …");
+  try{
+    const meta=await createOfflineSnapshot(provider,(n,total)=>{$("offlineSnapshotStatus").textContent=`Lade Cover und Spiele: ${n}/${total}`;});
+    await updateOfflineStatus();showMessage("Offline-Regal gespeichert",`${meta.games} Spiele und ${meta.covers} eigene Cover sind auf diesem Gerät schreibgeschützt verfügbar. Änderungen werden nicht offline gespeichert.`);
+  }catch(err){showMessage("Offline-Sicherung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+}
+async function useOfflineSnapshot(reason){
+  try{
+    const snapshot=await readOfflineSnapshot();
+    if(!snapshot.meta||!snapshot.games.length)return false;
+    provider=new OfflineProvider(snapshot);currentMode="offline";games=await provider.list();
+    if(queueTimer){clearInterval(queueTimer);queueTimer=null;}
+    importJobs=[];renderQueue();renderLocations();renderGames();updateOfflineUi();
+    showBanner(`Keine Verbindung (${reason}). Offline-Regal vom ${new Date(snapshot.meta.saved_at).toLocaleString("de-CH")} ist schreibgeschützt geöffnet.`);
+    return true;
+  }catch{return false;}
+}
+async function reconnectServer(){
+  try{
+    const server=await makeServerProvider();await server.health();
+    provider=server;currentMode="server";updateOfflineUi();await refreshConfig();await loadGames();startQueuePolling();await updateOfflineStatus();
+    showMessage("Wieder verbunden","Die Server-Sammlung ist wieder aktiv. Offline-Änderungen gab es keine.");
+  }catch(err){showMessage("Noch keine Verbindung",err.message);}
+}
+async function deleteOfflineShelf(){
+  if(!confirm("Offline-Momentaufnahme dieses Geräts löschen? Die Server-Sammlung bleibt unverändert."))return;
+  await clearOfflineSnapshot();await updateOfflineStatus();
+  if(offlineReadOnly()){games=[];renderGames();showBanner("Offline-Daten gelöscht. Bitte mit dem Server verbinden.","error");}
+}
+function stopScanner(){
+  scanInProgress=false;if(scanTimeout){clearTimeout(scanTimeout);scanTimeout=null;}
+  for(const track of scannerStream?.getTracks?.()||[])track.stop();scannerStream=null;
+  const video=$("barcodeVideo");if(video){video.pause();video.srcObject=null;}
+}
+function acceptScannedCode(code){
+  const clean=String(code||"").replace(/\D/g,"");
+  if(![8,12,13,14].includes(clean.length)){ $("barcodeStatus").textContent="EAN muss 8, 12, 13 oder 14 Ziffern haben.";return;}
+  stopScanner();$("barcodeDialog").close();$("quickAddText").value=clean;$("quickAddText").focus();
+}
+async function openBarcodeScanner(){
+  $("barcodeManual").value="";$("barcodeStatus").textContent="Prüfe Kamerazugriff …";
+  $("barcodeDialog").showModal();
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){$("barcodeStatus").textContent="Kamera benötigt HTTPS und einen unterstützten Browser. Bitte EAN manuell eingeben.";return;}
+  if(!("BarcodeDetector" in window)){$("barcodeStatus").textContent="Dieser Browser unterstützt die automatische Barcode-Erkennung nicht. Bitte EAN manuell eingeben.";return;}
+  try{
+    const supported=typeof BarcodeDetector.getSupportedFormats==="function"?await BarcodeDetector.getSupportedFormats():["ean_13","ean_8","upc_a"];
+    const formats=["ean_13","ean_8","upc_a","itf"].filter(f=>supported.includes(f));
+    if(!formats.length)throw new Error("Keine EAN-Formate verfügbar.");
+    const detector=new BarcodeDetector({formats});
+    scannerStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+    if(!$("barcodeDialog").open){stopScanner();return;}
+    const video=$("barcodeVideo");video.srcObject=scannerStream;await video.play();scanInProgress=true;
+    $("barcodeStatus").textContent="EAN ruhig vor die Kamera halten …";
+    const scan=async()=>{
+      if(!scanInProgress||!$("barcodeDialog").open)return;
+      try{
+        if(video.readyState>=2){const hits=await detector.detect(video);const match=hits.find(x=>/^[0-9]{8,14}$/.test(x.rawValue));if(match){acceptScannedCode(match.rawValue);return;}}
+      }catch{/* Browser may skip frames while camera is starting. */}
+      if(scanInProgress)scanTimeout=setTimeout(scan,350);
+    };scan();
+  }catch(err){stopScanner();$("barcodeStatus").textContent=`Kamera nicht verfügbar: ${err.message}. Bitte EAN manuell eingeben.`;}
+}
+async function downloadFullZip(){
+  if(currentMode!=="server")return showMessage("Nur Server","Das vollständige ZIP enthält die Docker-Daten. Im lokalen Pages-Modus bitte den JSON-Export verwenden.");
+  const b=$("downloadFullZipButton");setBusy(b,true,"ZIP wird erstellt …");
+  try{const blob=await provider.downloadFullZip();fallbackDownload(blob,`brettspielregal-full-${new Date().toISOString().slice(0,10)}.zip`);$("fullBackupStatus").textContent="ZIP erstellt. Kopie ausserhalb des Servers aufbewahren.";}
+  catch(err){showMessage("ZIP-Backup fehlgeschlagen",err.message);}finally{setBusy(b,false);}
+}
+async function stageFullRestore(){
+  if(currentMode!=="server")return showMessage("Nur Server","Ein vollständiger Restore ist nur im Docker-Servermodus verfügbar.");
+  const file=$("fullZipRestoreFile").files?.[0];if(!file)return showMessage("ZIP fehlt","Bitte ein vollständiges Backup-ZIP auswählen.");
+  if(!confirm("ZIP wird geprüft und für den nächsten vollständigen Stack-Neustart vorgemerkt. App UND Worker müssen anschließend gemeinsam neu gestartet werden. Fortfahren?"))return;
+  const phrase=prompt('Zur Sicherheit RESTORE eingeben (damit wird die bestehende Sammlung beim nächsten gemeinsamen Stack-Neustart ersetzt):');
+  if(phrase!=="RESTORE")return;
+  const b=$("stageFullRestoreButton");setBusy(b,true,"Prüfe ZIP …");
+  try{const token=$("fullRestoreToken").value;const out=await provider.restoreFullZip(file,token);$("fullRestoreToken").value="";$("fullBackupStatus").textContent=`Restore vorgemerkt: ${out.games} Spiele, ${out.attachments} Anhänge. Jetzt den GESAMTEN Portainer-Stack (App und Worker) stoppen und neu starten. Vor dem Ersetzen wird ein Backup erstellt.`;showMessage("Restore vorbereitet","Archiv und Prüfsummen sind gültig. Jetzt den gesamten Portainer-Stack mit App und Worker gemeinsam neu starten. Bis dahin wurden keine Live-Daten überschrieben.");}
+  catch(err){showMessage("Restore-Prüfung fehlgeschlagen",err.message);}finally{setBusy(b,false);$("fullZipRestoreFile").value="";$("fullRestoreToken").value="";}
+}
+const APPROVAL_LABELS={min_players:"Spieler min.",max_players:"Spieler max.",play_time_min:"Spieldauer",min_age:"Alter",year:"Jahr",designer:"Designer",publisher:"Verlag",ean:"EAN",bgg_id:"BGG-ID"};
+async function loadApprovalSettings(){
+  const container=$("aiApprovalFields"),info=$("aiApprovalStatus");
+  if(currentMode!=="server"){container.innerHTML="";info.textContent="Nur im Server-Modus verfügbar.";return;}
+  try{
+    const prefs=await provider.getApprovalSettings();$("aiApprovalEnabled").checked=!!prefs.enabled;
+    container.innerHTML=(prefs.allowed_fields||[]).map(field=>`<label><input type="checkbox" data-approval-field="${esc(field)}" ${prefs.fields.includes(field)?"checked":""}> ${esc(APPROVAL_LABELS[field]||field)}</label>`).join("");
+    info.textContent="Freigaben gelten nur für neue abgeschlossene Recherchen. Standard: aus.";
+  }catch(err){info.textContent=err.message;}
+}
+async function saveApprovalSettings(){
+  if(currentMode!=="server")return;
+  const fields=[...document.querySelectorAll("[data-approval-field]:checked")].map(e=>e.dataset.approvalField);
+  const btn=$("saveAiApprovalButton");setBusy(btn,true,"Speichere …");
+  try{const prefs=await provider.saveApprovalSettings($("aiApprovalEnabled").checked,fields);$("aiApprovalStatus").textContent=prefs.enabled?`Aktiv für ${prefs.fields.length} erlaubte Felder; Widersprüche bleiben offen.`:"Automatische Freigabe ist ausgeschaltet.";}
+  catch(err){$("aiApprovalStatus").textContent=err.message;}finally{setBusy(btn,false);}
+}
 const FILTER_IDS=["filterPlayers","filterDuration","filterAge","filterLocation","filterMissing"];
 let advancedFilters={};
 try{advancedFilters=JSON.parse(localStorage.getItem("brettspielregal-advanced-filters")||"{}");}catch{advancedFilters={};}
@@ -56,6 +168,7 @@ async function renameLocation(){
   try{const out=await provider.renameLocation(oldName,newName);await loadGames();$("locationRenameTo").value="";showMessage("Lagerort geändert",`${out.changed||0} Spiele aktualisiert.`);}catch(err){showMessage("Fehler",err.message);}finally{setBusy(btn,false);}
 }
 function openQuickAdd(){
+  if(offlineReadOnly()){showMessage("Offline-Regal","Die gespeicherte Ansicht ist schreibgeschützt.");return;}
   $("quickAddAi").disabled=!researchAvailable();$("quickAddAi").checked=researchAvailable();
   $("quickAddLocation").value=localStorage.getItem("brettspielregal-last-location")||"";
   $("quickAddText").value="";$("quickAddDialog").showModal();
@@ -81,14 +194,14 @@ async function submitQuickAdd(event){
   }catch(err){showMessage("Erfassung fehlgeschlagen",err.message);}finally{setBusy(b,false);}
 }
 async function archiveAsset(kind){
-  const game=games.find(g=>g.id===activeDetailGameId);
-  if(!game)return;
+  const game=games.find(g=>g.id===$("gameId").value);
+  if(!game||!$("gameDialog").open)return;
   const url=kind==="cover"?game.cover_url:game.rules_url;
   if(!safeHttpsUrl(url)){showMessage("Archivieren","Es ist kein gültiger HTTPS-Link gespeichert.");return;}
   if(!confirm(`${kind==="cover"?"Cover":"PDF-Anleitung"} von der externen Quelle in den ${currentMode==="server"?"Docker-Speicher":"lokalen Gerätespeicher"} übernehmen?`))return;
   const b=$(kind==="cover"?"archiveCoverButton":"archiveRulesButton");setBusy(b,true,"Lade herunter …");
-  try{await provider.archiveAsset(game.id,kind,url);await loadGames();openGameDetail(game.id);$("detailAttachmentStatus").textContent="Datei wurde lokal archiviert; Original-Link bleibt erhalten.";}
-  catch(err){$("detailAttachmentStatus").textContent=err.message;}
+  try{await provider.archiveAsset(game.id,kind,url);await loadGames();renderEditAttachments(games.find(g=>g.id===game.id));$("editActionStatus").textContent="Datei wurde lokal archiviert; Original-Link bleibt erhalten.";}
+  catch(err){$("editActionStatus").textContent=err.message;}
   finally{setBusy(b,false);}
 }
 
@@ -104,7 +217,7 @@ const FIELD_LABELS=Object.fromEntries(FIELD_MAP.map(([key,label])=>[key,label]))
 
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function nl2br(s){return esc(s).replace(/\n/g,"<br>");}
-function modeLabel(){return currentMode==="server"?"Server":"Lokal";}
+function modeLabel(){return currentMode==="offline"?"Offline · nur lesen":currentMode==="server"?"Server":"Lokal";}
 function isDocker(){return config.buildTarget==="docker";}
 function selectedMode(){return isDocker()?"server":(localStorage.getItem("brettspielregal-mode")||"");}
 function setModeValue(mode){if(!isDocker())localStorage.setItem("brettspielregal-mode",mode);currentMode=mode;releaseCovers("list");releaseCovers("detail");}
@@ -292,7 +405,7 @@ function renderQueue(){
     if(!confirm("Diesen hängenden Auftrag wirklich freigeben? Das Spiel bleibt erhalten; temporäre KI-Vorschläge dieses Auftrags werden verworfen."))return;
     b.disabled=true;try{await provider.forceReleaseImportJob(b.dataset.forceReleaseJob);await refreshQueue(true);}catch(err){showMessage("Freigeben fehlgeschlagen",err.message);}finally{b.disabled=false;}
   }));
-  $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>openGameDetail(b.dataset.reviewGame)));
+  $("queueList").querySelectorAll("[data-review-game]").forEach(b=>b.addEventListener("click",()=>{const game=games.find(g=>g.id===b.dataset.reviewGame);if(game)openGame(game);}));
 }
 function openQueueCleanup(){
   const dlg=$("queueCleanupDialog");
@@ -337,8 +450,11 @@ function startQueuePolling(){
 }
 async function loadGames(){
   showBanner("");
-  try{games=await provider.list();renderLocations();renderGames();}
-  catch(err){games=[];renderGames();showBanner(err.message,"error");}
+  try{games=await provider.list();renderLocations();renderGames();updateOfflineUi();}
+  catch(err){
+    if(currentMode==="server"&&(/nicht erreichbar|Zeitüberschreitung|network|offline|fetch/i.test(err.message)||!navigator.onLine)&&await useOfflineSnapshot(err.message))return;
+    games=[];renderGames();showBanner(err.message,"error");
+  }
 }
 function imageAttachment(game){
   const images=(game.attachments||[]).filter(a=>a.kind==="image");
@@ -502,6 +618,7 @@ function renderCoverPreview(){
   box.classList.remove("hidden");
 }
 function openGame(game=null){
+  if(offlineReadOnly()){showMessage("Offline-Regal","Bearbeiten ist erst nach Wiederverbindung möglich.");return;}
   clearGameForm();$("deleteGameButton").classList.toggle("hidden",!game);$("gameDialogTitle").textContent=game?"Spiel bearbeiten":"Spiel erfassen";
   if(game){
     $("gameId").value=game.id;$("titleInput").value=game.title||"";$("sourceUrlInput").value=game.source_url||"";$("descriptionInput").value=game.description||"";
@@ -511,6 +628,12 @@ function openGame(game=null){
     renderCoverPreview();
   }
   renderTagPicker();renderEditAttachments(game);
+  $("editAdvancedTools").classList.toggle("hidden",!game);
+  $("editAdvancedTools").open=!!game&&latestJobForGame(game.id)?.status==="review";
+  $("editActionStatus").textContent="";
+  $("archiveCoverButton").classList.toggle("hidden",!game||!safeHttpsUrl(game.cover_url));
+  $("archiveRulesButton").classList.toggle("hidden",!game||!safeHttpsUrl(game.rules_url));
+  renderEditReview(game);
   const researchRow=$("newGameResearchRow"),researchToggle=$("newGameAutoEnrich");
   const showResearch=!game&&currentMode==="server";
   if(researchRow&&researchToggle){researchRow.classList.toggle("hidden",!showResearch);
@@ -522,7 +645,14 @@ function renderEditAttachments(game=null){
   const current=game?.attachments||[];
   $("pendingAttachmentList").innerHTML=pendingFiles.map((file,i)=>`<div class="attachment-row"><div class="attachment-row-copy"><strong>${esc(file.name)}</strong><small>Wird beim Speichern hinzugefügt · ${sizeText(file.size)}</small></div><button type="button" class="button" data-remove-pending="${i}">Entfernen</button></div>`).join("");
   $("pendingAttachmentList").querySelectorAll("[data-remove-pending]").forEach(b=>b.addEventListener("click",()=>{pendingFiles.splice(Number(b.dataset.removePending),1);renderEditAttachments(game);}));
-  $("existingAttachmentList").innerHTML=current.map(a=>`<div class="attachment-row"><div class="attachment-row-copy"><strong>${a.kind==="rules"?"📄":"🖼️"} ${esc(a.filename)}</strong><small>Gespeichert · ${sizeText(a.size)}</small></div><button type="button" class="button danger" data-delete-existing="${esc(a.id)}">Löschen</button></div>`).join("");
+  $("existingAttachmentList").innerHTML=current.map(a=>`<div class="attachment-row"><div class="attachment-row-copy"><strong>${a.kind==="rules"?"📄":"🖼️"} ${esc(a.filename)}</strong><small>Gespeichert · ${sizeText(a.size)}${a.kind==="image"&&game?.cover_attachment_id===a.id?" · Cover ✓":""}</small></div><div class="edit-attachment-actions"><button type="button" class="button" data-open-existing="${esc(a.id)}">${a.kind==="rules"?"Öffnen":"Ansehen"}</button>${a.kind==="rules"?`<button type="button" class="button" data-download-existing="${esc(a.id)}">Herunterladen</button>`:""}${a.kind==="image"?`<button type="button" class="button" data-cover-existing="${esc(a.id)}" ${game?.cover_attachment_id===a.id?"disabled":""}>${game?.cover_attachment_id===a.id?"Cover ✓":"Als Cover"}</button>`:""}<button type="button" class="button danger" data-delete-existing="${esc(a.id)}">Löschen</button></div></div>`).join("");
+  const find=id=>current.find(a=>a.id===id);
+  $("existingAttachmentList").querySelectorAll("[data-open-existing]").forEach(b=>b.addEventListener("click",()=>openStoredAttachment(game,find(b.dataset.openExisting))));
+  $("existingAttachmentList").querySelectorAll("[data-download-existing]").forEach(b=>b.addEventListener("click",()=>downloadStoredAttachment(game,find(b.dataset.downloadExisting))));
+  $("existingAttachmentList").querySelectorAll("[data-cover-existing]").forEach(b=>b.addEventListener("click",async()=>{
+    try{const saved=games.find(g=>g.id===game.id);await provider.update(game.id,{...saved,cover_attachment_id:b.dataset.coverExisting});await loadGames();renderEditAttachments(games.find(g=>g.id===game.id));$("attachmentFormStatus").textContent="Cover wurde geändert.";}
+    catch(err){$("attachmentFormStatus").textContent=err.message;}
+  }));
   $("existingAttachmentList").querySelectorAll("[data-delete-existing]").forEach(b=>b.addEventListener("click",async()=>{
     if(!confirm("Diesen Anhang endgültig löschen?"))return;
     try{await provider.removeAttachment(game.id,b.dataset.deleteExisting);await loadGames();renderEditAttachments(games.find(g=>g.id===game.id));}
@@ -554,19 +684,9 @@ function suggestionEvidenceMarkup(item){
   if(conflicts.length)rows.push(`<div class="evidence-group evidence-conflicts"><strong>Abweichende Angaben</strong><ul>${conflicts.map(src=>`<li><span>${esc(src.name)}</span><small>${esc(String(src.value??"—"))}</small>${safeHttpsUrl(src.url)?`<a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">Öffnen ↗</a>`:""}</li>`).join("")}</ul></div>`);
   return `<div class="suggestion-evidence-line">${badge}${summary}<details class="suggestion-evidence-details"><summary>Belege ansehen</summary>${rows.join("")}</details></div>`;
 }
-function openGameDetail(gameId){
-  const game=games.find(g=>g.id===gameId);if(!game)return;
-  activeDetailGameId=gameId;releaseCovers("detail");$("detailAttachmentStatus").textContent="";
-  const chips=[];
-  if(game.min_players||game.max_players)chips.push(detailChip(`${game.min_players||"?"}–${game.max_players||game.min_players||"?"} Spieler`,"core"));
-  if(game.play_time_min)chips.push(detailChip(`${game.play_time_min} Min.`,"core"));
-  if(game.min_age!==null&&game.min_age!==undefined&&game.min_age!=="")chips.push(detailChip(`ab ${game.min_age}`,"core"));
-  if(game.award)chips.push(detailChip(game.award,"award"));
-  const facts=[["Lagerort",game.storage_location],["Verlag",game.publisher],["Jahr",game.year],["Autor / Designer",game.designer],["EAN / GTIN",game.ean],["BGG-ID",game.bgg_id]].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
-  const images=(game.attachments||[]).filter(a=>a.kind==="image"),pdfs=(game.attachments||[]).filter(a=>a.kind==="rules"),selected=imageAttachment(game);
-  const imageGallery=images.length?`<div class="attachment-gallery">${images.map(a=>`<div class="attachment-tile ${selected?.id===a.id?"cover-selected":""}">${coverHtml(game,"tile-image",a)}<strong>${esc(a.filename)}</strong><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Ansehen</button><button class="button" type="button" data-cover-attachment="${esc(a.id)}" ${selected?.id===a.id?"disabled":""}>${selected?.id===a.id?"Cover ✓":"Als Cover"}</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
-  const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button><button class="button" type="button" data-download-attachment="${esc(a.id)}">Laden</button><button class="button danger" type="button" data-delete-attachment="${esc(a.id)}">×</button></div></div>`).join("")}</div>`:"";
-  const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
+function renderEditReview(game){
+  const box=$("editReviewPanel");
+  if(!game||currentMode!=="server"||offlineReadOnly()){box.innerHTML="";$("detailReEnrichButton").classList.add("hidden");$("detailApproveButton").classList.add("hidden");return;}
   const reviewJob=latestJobForGame(game.id);
   const pendingSuggestions=(reviewJob?.suggestions||[]).filter(x=>x.status==="pending");
   const needsReview=reviewJob?.status==="review"&&pendingSuggestions.length>0;
@@ -589,37 +709,66 @@ function openGameDetail(gameId){
   }).join("");
   const safeAction=safeSuggestionCount?`<button type="button" class="button approve" data-apply-safe-suggestions>✓ Alle gut belegten übernehmen (${safeSuggestionCount})</button>`:"";
   const warningPanel=needsReview?`<section class="detail-panel review-panel"><div class="suggestion-head"><div><h4>KI-Vorschläge prüfen</h4><p class="hint">Noch nichts davon hat deine freigegebenen Spieldaten überschrieben. Übernimm nur, was passt.</p><div class="evidence-legend"><span>🔵 Primärquelle</span><span>🟢 Gut belegt</span><span>⚪ Eine Quelle</span><span>🟡 KI-abgeleitet</span><span>🟠 Widerspruch</span></div></div><span class="proposal-count">${pendingSuggestions.length}</span></div>${safeAction?`<div class="safe-apply-bar"><div><strong>Schnellfreigabe</strong><small>Übernimmt nur vom Backend als gut belegt markierte Felder. Widersprüche und KI-abgeleitete Texte bleiben offen.</small></div>${safeAction}</div>`:""}${researchPanel}${suggestionRows}${reviewJob.warnings?.length?`<div class="warning-box"><strong>Hinweise der Recherche</strong><ul>${reviewJob.warnings.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}${sourceItems?`<details class="review-sources"><summary>Verwendete Recherchequellen</summary><ul>${sourceItems}</ul></details>`:""}<div class="suggestion-footer"><button type="button" class="button subtle" data-reject-all-suggestions>Alle verwerfen</button></div></section>`:"";
+
+  box.innerHTML=warningPanel;
+  $("detailApproveButton").classList.toggle("hidden",!needsReview);
+  const refresh=async(applied=[])=>{
+    await refreshQueue();await loadGames();
+    const updated=games.find(g=>g.id===game.id);
+    for(const field of applied){
+      const found=FIELD_MAP.find(item=>item[0]===field);
+      if(found&&updated){const val=updated[field];$(found[2]).value=Array.isArray(val)?val.join(", "):(val??"");}
+    }
+    renderCoverPreview();
+    if(updated){$("archiveCoverButton").classList.toggle("hidden",!safeHttpsUrl(updated.cover_url));$("archiveRulesButton").classList.toggle("hidden",!safeHttpsUrl(updated.rules_url));}
+    renderEditReview(updated);
+  };
+  const reportError=err=>{$("editActionStatus").textContent=err?.message||String(err);};
+  $("detailApproveButton").onclick=needsReview?async()=>{
+    if(!confirm("Alle offenen KI-Vorschläge übernehmen? Nicht gespeicherte Änderungen in den betroffenen Feldern werden ersetzt."))return;
+    const b=$("detailApproveButton");setBusy(b,true,"Übernehme …");
+    try{const result=await provider.applyImportSuggestions(reviewJob.id,null);await refresh(result?.applied||[]);$("editActionStatus").textContent="KI-Vorschläge übernommen.";}catch(err){reportError(err);}finally{setBusy(b,false);}
+  }:null;
+  if(needsReview){
+    const safeButton=box.querySelector("[data-apply-safe-suggestions]");
+    if(safeButton)safeButton.addEventListener("click",async()=>{setBusy(safeButton,true,"Übernehme …");try{const result=await provider.applySafeImportSuggestions(reviewJob.id);await refresh(result?.applied||[]);$("editActionStatus").textContent=`${result.applied?.length||0} gut belegte Felder übernommen.`;}catch(err){reportError(err);}finally{setBusy(safeButton,false);}});
+    box.querySelectorAll("[data-apply-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Übernehme …");try{const result=await provider.applyImportSuggestions(reviewJob.id,[b.dataset.applySuggestion]);await refresh(result?.applied||[]);}catch(err){reportError(err);}finally{setBusy(b,false);}}));
+    box.querySelectorAll("[data-reject-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,[b.dataset.rejectSuggestion]);await refresh();}catch(err){reportError(err);}finally{setBusy(b,false);}}));
+    box.querySelectorAll("[data-reject-all-suggestions]").forEach(b=>b.addEventListener("click",async()=>{if(!confirm("Alle offenen KI-Vorschläge für dieses Spiel verwerfen?"))return;setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,null);await refresh();}catch(err){reportError(err);}finally{setBusy(b,false);}}));
+  }
+  const canReEnrich=autoEnrichEnabled&&!needsReview&&!["queued","running"].includes(reviewJob?.status);
+  $("detailReEnrichButton").classList.toggle("hidden",!canReEnrich);
+  $("detailReEnrichButton").onclick=canReEnrich?async()=>{
+    if(!confirm("Recherche neu starten? Nicht gespeicherte Änderungen im Bearbeitungsformular gehen verloren."))return;
+    const b=$("detailReEnrichButton");setBusy(b,true,"Reihe ein …");
+    try{await provider.enqueueEnrichment(game.id,game.ean||game.title,false);await refreshQueue();$("gameDialog").close();showView("import");}
+    catch(err){reportError(err);}finally{setBusy(b,false);}
+  }:null;
+}
+
+function openGameDetail(gameId){
+  if(offlineReadOnly())$("detailAttachmentStatus").textContent="Offline-Momentaufnahme · schreibgeschützt";
+  const game=games.find(g=>g.id===gameId);if(!game)return;
+  activeDetailGameId=gameId;releaseCovers("detail");$("detailAttachmentStatus").textContent="";
+  const chips=[];
+  if(game.min_players||game.max_players)chips.push(detailChip(`${game.min_players||"?"}–${game.max_players||game.min_players||"?"} Spieler`,"core"));
+  if(game.play_time_min)chips.push(detailChip(`${game.play_time_min} Min.`,"core"));
+  if(game.min_age!==null&&game.min_age!==undefined&&game.min_age!=="")chips.push(detailChip(`ab ${game.min_age}`,"core"));
+  if(game.award)chips.push(detailChip(game.award,"award"));
+  const facts=[["Lagerort",game.storage_location],["Verlag",game.publisher],["Jahr",game.year],["Autor / Designer",game.designer],["EAN / GTIN",game.ean],["BGG-ID",game.bgg_id]].filter(([,v])=>v!==null&&v!==undefined&&v!=="");
+  const images=(game.attachments||[]).filter(a=>a.kind==="image"),pdfs=(game.attachments||[]).filter(a=>a.kind==="rules"),selected=imageAttachment(game);
+  const imageGallery=images.length?`<div class="attachment-gallery">${images.map(a=>`<div class="attachment-tile ${selected?.id===a.id?"cover-selected":""}">${coverHtml(game,"tile-image",a)}<strong>${esc(a.filename)}</strong><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Ansehen</button></div></div>`).join("")}</div>`:"";
+  const pdfList=pdfs.length?`<div class="attachment-pdf-list">${pdfs.map(a=>`<div class="attachment-pdf"><span aria-hidden="true">📄</span><div class="attachment-row-copy"><strong>${esc(a.filename)}</strong><small>${sizeText(a.size)} · PDF</small></div><div class="attachment-actions"><button class="button" type="button" data-open-attachment="${esc(a.id)}">Öffnen</button></div></div>`).join("")}</div>`:"";
+  const links=[["Produkt- oder Quellseite",game.source_url],["Online-Anleitung",game.rules_url]].filter(([,url])=>safeHttpsUrl(url));
+  const reviewJob=latestJobForGame(game.id);
+  const needsReview=reviewJob?.status==="review"&&(reviewJob?.suggestions||[]).some(x=>x.status==="pending");
   $("detailTitle").textContent=game.title||"Spiel";
   const tagPanel=(game.tags||[]).length?`<section class="detail-panel"><h4>Tags</h4><div class="detail-tag-groups">${detailTagGroups(game.tags)}</div></section>`:"";
-  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${warningPanel}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section>${tagPanel}<section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
+  $("detailBody").innerHTML=`<div class="detail-hero">${coverHtml(game,"detail-cover")}<div class="detail-copy"><h3>${esc(game.title)}</h3><p class="detail-description">${esc(game.description||"Noch keine Beschreibung hinterlegt.")}</p><div class="detail-meta">${chips.join("")}</div></div></div><div class="detail-panels">${needsReview&&!offlineReadOnly()?`<p class="review-readonly-hint">KI-Vorschläge warten auf Prüfung. Öffne <strong>Bearbeiten</strong>, um sie zu prüfen.</p>`:""}<section class="detail-panel"><h4>Auf einen Blick</h4><div class="detail-grid">${facts.length?facts.map(([name,value])=>`<div class="detail-item"><span>${esc(name)}</span><strong>${esc(value)}</strong></div>`).join(""):`<p class="hint">Noch keine weiteren Angaben.</p>`}</div></section>${tagPanel}<section class="detail-panel"><h4>Eigene Anhänge (${images.length+pdfs.length})</h4>${imageGallery}${pdfList}${images.length+pdfs.length===0?`<p class="hint">Noch keine Bilder oder PDF-Anleitungen hochgeladen.</p>`:""}</section>${links.length?`<section class="detail-panel"><h4>Externe Links</h4>${links.map(([name,url])=>`<a class="detail-link" href="${esc(safeHttpsUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`).join("")}</section>`:""}${game.rules_text?`<section class="detail-panel"><h4>Kurzregeln</h4><p class="detail-notes">${esc(game.rules_text)}</p></section>`:""}${game.notes?`<section class="detail-panel"><h4>Notizen</h4><p class="detail-notes">${esc(game.notes)}</p></section>`:""}</div>`;
   installNativeCoverFallback($("detailBody"));
-  $("archiveCoverButton").classList.toggle("hidden",!safeHttpsUrl(game.cover_url));
-  $("archiveRulesButton").classList.toggle("hidden",!safeHttpsUrl(game.rules_url));
   $("detailEditButton").onclick=()=>{$("gameDetailDialog").close();releaseCovers("detail");openGame(game);};
-  $("detailApproveButton").classList.toggle("hidden",!needsReview);
-  $("detailApproveButton").onclick=needsReview?async()=>{const b=$("detailApproveButton");setBusy(b,true,"Übernehme …");try{await provider.applyImportSuggestions(reviewJob.id,null);await loadGames();await refreshQueue();openGameDetail(game.id);showMessage("Vorschläge übernommen","Alle noch offenen KI-Vorschläge wurden in die freigegebenen Spieldaten übernommen.");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
-  if(needsReview){
-    const safeButton=$("detailBody").querySelector("[data-apply-safe-suggestions]");
-    if(safeButton)safeButton.addEventListener("click",async()=>{setBusy(safeButton,true,"Übernehme …");try{const result=await provider.applySafeImportSuggestions(reviewJob.id);await loadGames();await refreshQueue();openGameDetail(game.id);showMessage("Gut belegte Vorschläge übernommen",`${result.applied?.length||0} Feld(er) wurden übernommen. Unsichere, widersprüchliche und KI-abgeleitete Vorschläge bleiben zur Prüfung offen.`);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(safeButton,false);}});
-    $("detailBody").querySelectorAll("[data-apply-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Übernehme …");try{await provider.applyImportSuggestions(reviewJob.id,[b.dataset.applySuggestion]);await loadGames();await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
-    $("detailBody").querySelectorAll("[data-reject-suggestion]").forEach(b=>b.addEventListener("click",async()=>{setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,[b.dataset.rejectSuggestion]);await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
-    $("detailBody").querySelectorAll("[data-reject-all-suggestions]").forEach(b=>b.addEventListener("click",async()=>{if(!confirm("Alle offenen KI-Vorschläge für dieses Spiel verwerfen?"))return;setBusy(b,true,"Verwerfe …");try{await provider.rejectImportSuggestions(reviewJob.id,null);await refreshQueue();openGameDetail(game.id);}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}));
-  }
-  const canReEnrich=currentMode==="server"&&autoEnrichEnabled&&!needsReview&&!(["queued","running"].includes(reviewJob?.status));
-  $("detailReEnrichButton").classList.toggle("hidden",!canReEnrich);
-  $("detailReEnrichButton").onclick=canReEnrich?async()=>{const b=$("detailReEnrichButton");setBusy(b,true,"Reihe ein …");try{await provider.enqueueEnrichment(game.id,game.ean||game.title,false);await refreshQueue();$("gameDetailDialog").close();showView("import");}catch(err){$("detailAttachmentStatus").textContent=err.message;}finally{setBusy(b,false);}}:null;
   const find=id=>(game.attachments||[]).find(a=>a.id===id);
   $("detailBody").querySelectorAll("[data-open-attachment]").forEach(b=>b.addEventListener("click",()=>openStoredAttachment(game,find(b.dataset.openAttachment))));
-  $("detailBody").querySelectorAll("[data-download-attachment]").forEach(b=>b.addEventListener("click",()=>downloadStoredAttachment(game,find(b.dataset.downloadAttachment))));
-  $("detailBody").querySelectorAll("[data-cover-attachment]").forEach(b=>b.addEventListener("click",async()=>{
-    try{await provider.update(game.id,{...game,cover_attachment_id:b.dataset.coverAttachment});await loadGames();openGameDetail(game.id);}
-    catch(err){$("detailAttachmentStatus").textContent=err.message;}
-  }));
-  $("detailBody").querySelectorAll("[data-delete-attachment]").forEach(b=>b.addEventListener("click",async()=>{
-    if(!confirm("Diesen Anhang endgültig löschen?"))return;
-    try{await provider.removeAttachment(game.id,b.dataset.deleteAttachment);await loadGames();openGameDetail(game.id);}
-    catch(err){$("detailAttachmentStatus").textContent=err.message;}
-  }));
   const detailDialog=$("gameDetailDialog");
   if(!detailDialog.open)detailDialog.showModal();
   // Erst nach dem Öffnen laden. Safari/iOS erkennt Bilder in einem geschlossenen
@@ -630,7 +779,7 @@ async function downloadStoredAttachment(game,att){
   if(!att)return;
   try{const blob=await provider.getAttachmentBlob(game.id,att.id),url=URL.createObjectURL(blob);
     const a=document.createElement("a");a.href=url;a.download=att.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  }catch(err){$("detailAttachmentStatus").textContent=err.message;}
+  }catch(err){($("gameDialog").open?$("attachmentFormStatus"):$("detailAttachmentStatus")).textContent=err.message;}
 }
 async function openStoredAttachment(game,att){
   if(!att)return;
@@ -638,25 +787,8 @@ async function openStoredAttachment(game,att){
   try{const blob=await provider.getAttachmentBlob(game.id,att.id),url=URL.createObjectURL(blob);
     if(tab){tab.location.href=url;setTimeout(()=>URL.revokeObjectURL(url),300000);}
     else{const a=document.createElement("a");a.href=url;a.download=att.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
-  }catch(err){tab?.close();$("detailAttachmentStatus").textContent=err.message;}
+  }catch(err){tab?.close();($("gameDialog").open?$("attachmentFormStatus"):$("detailAttachmentStatus")).textContent=err.message;}
 }
-async function addDetailFiles(files){
-  if(!files.length||!activeDetailGameId)return;
-  const gameId=activeDetailGameId;
-  const before=games.find(g=>g.id===gameId);
-  const hadExplicitCover=!!before?.cover_attachment_id;
-  $("detailAttachmentStatus").textContent="Dateien werden gespeichert …";
-  try{
-    for(const file of files)await provider.addAttachment(gameId,file);
-    await loadGames();
-    const after=games.find(g=>g.id===gameId);
-    const autoCover=!hadExplicitCover&&!!after?.cover_attachment_id;
-    openGameDetail(gameId);
-    $("detailAttachmentStatus").textContent=`${files.length} Datei(en) gespeichert.${autoCover?" Das erste Bild wurde als Cover gesetzt.":""}`;
-  }catch(err){await loadGames();openGameDetail(gameId);$("detailAttachmentStatus").textContent=`Nicht alle Dateien gespeichert: ${err.message}`;}
-  $("detailAttachmentInput").value="";
-}
-
 function formGame(){return {
   title:$("titleInput").value.trim(),source_url:$("sourceUrlInput").value.trim(),description:$("descriptionInput").value.trim(),
   min_players:inputNumber("minPlayersInput"),max_players:inputNumber("maxPlayersInput"),play_time_min:inputNumber("playTimeInput"),min_age:inputNumber("minAgeInput"),
@@ -797,7 +929,7 @@ async function rulesSearch(){
 }
 
 function downloadJson(data,name){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const file=new File([blob],name,{type:"application/json"});if(navigator.share&&navigator.canShare?.({files:[file]})){return navigator.share({files:[file],title:"Brettspielregal Backup"}).catch(()=>fallbackDownload(blob,name));}fallbackDownload(blob,name);}
-function fallbackDownload(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
+function fallbackDownload(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},60000);}
 async function exportCurrent(){try{const backup=await provider.exportData();await downloadJson(backup,`brettspielregal-${currentMode}-${new Date().toISOString().slice(0,10)}.json`);}catch(err){showMessage("Export fehlgeschlagen",err.message);}}
 function strategyDialog(preview,context){
   return new Promise(resolve=>{
@@ -820,7 +952,7 @@ async function serverToLocal(){
 }
 
 function setDiagnostic(id,label,kind="neutral"){const el=$(id);if(!el)return;el.textContent=label;el.className=`diagnostic-state ${kind}`;}
-function resetDiagnostics(message="Nicht geprüft"){for(const id of ["diagBackend","diagApi","diagWorker","diagOllama","diagSearxng","diagCors"])setDiagnostic(id,message,"neutral");const hint=$("diagnosticHint");if(hint)hint.textContent="";}
+function resetDiagnostics(message="Nicht geprüft"){for(const id of ["diagBackend","diagApi","diagWorker","diagOllama","diagSearxng","diagCors","diagBgg","diagSqlite","diagFiles","diagDisk","diagBackup"])setDiagnostic(id,message,"neutral");const hint=$("diagnosticHint");if(hint)hint.textContent="";}
 function diagnosticAiLabel(ai={}){
   if(ai.status==="disabled")return ["deaktiviert","warn"];
   if(ai.status==="error")return ["Fehler","error"];
@@ -845,7 +977,14 @@ async function runSystemDiagnostics({showDialog=false}={}){
     if(cors.status==="not_required")setDiagnostic("diagCors","nicht nötig","ok");
     else if(cors.allowed)setDiagnostic("diagCors","erlaubt","ok");
     else setDiagnostic("diagCors","blockiert","error");
+    const storage=result.storage||{};
+    setDiagnostic("diagBgg",result.bgg?.status==="configured"?"Token hinterlegt":"ohne Token",result.bgg?.status==="configured"?"ok":"warn");
+    setDiagnostic("diagSqlite",storage.database==="ok"?`OK · Schema ${storage.schema_version}`:"Fehler",storage.database==="ok"?"ok":"error");
+    setDiagnostic("diagFiles",storage.status==="ok"?`${storage.attachments} Dateien · ${storage.games} Spiele`:"Fehler",storage.status==="ok"?"ok":"error");
+    setDiagnostic("diagDisk",Number.isFinite(storage.free_bytes)?`${(storage.free_bytes/1024**3).toFixed(1)} GB frei`:"–",Number.isFinite(storage.free_bytes)?"ok":"warn");
+    setDiagnostic("diagBackup",storage.last_full_backup?new Date(storage.last_full_backup*1000).toLocaleDateString("de-CH"):"noch keines",storage.last_full_backup?"ok":"warn");
     const hints=[];
+    if(storage.restore_pending)hints.push("Vollständiger ZIP-Restore ist für den nächsten gemeinsamen Stack-Neustart vorgemerkt.");
     if(worker.status!=="online")hints.push("Der Worker meldet keinen aktuellen Heartbeat.");
     if(result.ai?.error)hints.push(result.ai.error);
     if(search.error)hints.push(search.error);
@@ -865,6 +1004,7 @@ async function runSystemDiagnostics({showDialog=false}={}){
 }
 
 async function loadSetup(){
+  updateOfflineStatus().catch(()=>{});loadApprovalSettings().catch(()=>{});
   serverConfig=await loadServerConnection();$("backendUrl").value=serverConfig.url||config.defaultApiUrl||"";$("cfClientId").value=serverConfig.clientId||"";$("cfClientSecret").value="";$("cfClientSecret").placeholder=serverConfig.clientSecret?"Gespeichert – zum Ersetzen neu eingeben":"Neu setzen oder leer lassen";
   if($("diagnosticOrigin"))$("diagnosticOrigin").textContent=`Frontend: ${window.location.origin}`;
   $("versionLabel").textContent=config.version;$("buildTargetLabel").textContent=isDocker()?"Docker Fullstack Build":"GitHub Pages PWA Build";
@@ -948,6 +1088,17 @@ function showView(view){
 }
 
 function bindEvents(){
+  $("openScannerButton").addEventListener("click",openBarcodeScanner);
+  $("closeBarcode").addEventListener("click",()=>$("barcodeDialog").close());
+  $("barcodeDialog").addEventListener("close",stopScanner);
+  $("barcodeUseManual").addEventListener("click",()=>acceptScannedCode($("barcodeManual").value));
+  document.addEventListener("visibilitychange",()=>{if(document.hidden&&$("barcodeDialog").open)$("barcodeDialog").close();});
+  $("saveOfflineSnapshotButton").addEventListener("click",saveOfflineShelf);
+  $("reconnectServerButton").addEventListener("click",reconnectServer);
+  $("deleteOfflineSnapshotButton").addEventListener("click",deleteOfflineShelf);
+  $("downloadFullZipButton").addEventListener("click",downloadFullZip);
+  $("stageFullRestoreButton").addEventListener("click",stageFullRestore);
+  $("saveAiApprovalButton").addEventListener("click",saveApprovalSettings);
   $("quickAddFab").addEventListener("click",openQuickAdd);
   $("closeQuickAdd").addEventListener("click",()=>$("quickAddDialog").close());
   $("quickAddForm").addEventListener("submit",submitQuickAdd);
@@ -967,13 +1118,12 @@ function bindEvents(){
   $("closeDetailDialog").addEventListener("click",()=>$("gameDetailDialog").close());
   $("gameDetailDialog").addEventListener("close",()=>releaseCovers("detail"));
   $("gameAttachmentInput").addEventListener("change",e=>{addPendingFiles(e.target.files||[]);e.target.value="";});
-  $("detailAttachmentInput").addEventListener("change",e=>addDetailFiles([...e.target.files||[]]));
   $("closeGameDialog").addEventListener("click",()=>$("gameDialog").close());$("cancelGameButton").addEventListener("click",()=>$("gameDialog").close());$("gameForm").addEventListener("submit",saveGame);$("deleteGameButton").addEventListener("click",removeGame);$("aiImportButton").addEventListener("click",aiImport);$("aiImageButton").addEventListener("click",()=>$("aiImageInput").click());$("aiImageInput").addEventListener("change",e=>aiImageImport(e.target.files));$("rulesSearchButton").addEventListener("click",rulesSearch);$("coverUrlInput").addEventListener("input",renderCoverPreview);
   document.querySelectorAll(".nav-button").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>switchMode(b.dataset.mode)));
   $("serverConfigForm").addEventListener("submit",saveConnection);$("clearSecretsButton").addEventListener("click",clearSecrets);$("testConnectionButton").addEventListener("click",testConnection);$("testAiButton").addEventListener("click",testAi);$("researchSettingsForm").addEventListener("submit",saveResearchSettings);$("resetResearchSettingsButton").addEventListener("click",resetResearchSettings);$("cleanupTagsButton").addEventListener("click",cleanupExistingTags);$("exportButton").addEventListener("click",exportCurrent);$("importInput").addEventListener("change",e=>{if(e.target.files?.[0])importFile(e.target.files[0]);});$("localToServerButton").addEventListener("click",localToServer);$("serverToLocalButton").addEventListener("click",serverToLocal);
   const closeMsg=()=>$("messageDialog").close();$("closeMessageButton").addEventListener("click",closeMsg);$("messageOkButton").addEventListener("click",closeMsg);
   document.querySelectorAll("[data-first-mode]").forEach(b=>b.addEventListener("click",async()=>{$("firstRunDialog").close();setModeValue(b.dataset.firstMode);try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){showView("setup");showMessage("Server einrichten",err.message);}await loadSetup();if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}}));
-  window.addEventListener("online",()=>currentMode==="server"&&loadGames());window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
+  window.addEventListener("online",()=>{if(currentMode==="server")loadGames();else if(offlineReadOnly())showBanner("Verbindung möglicherweise wieder verfügbar. Unter Setup auf ‚Wieder verbinden‘ tippen.");});window.addEventListener("offline",()=>currentMode==="server"&&showBanner("Offline: Im Server-Modus sind Schreibaktionen erst wieder nach erfolgreicher Verbindung möglich."));
 }
 
 async function init(){
@@ -983,7 +1133,9 @@ async function init(){
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){
     currentMode="local";provider=new LocalProvider();$("modeBadge").textContent="Lokal";await loadSetup();$("firstRunDialog").showModal();return;
   }
-  try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){currentMode="server";$("modeBadge").textContent="Server";showBanner(err.message,"error");showView("setup");}
+  try{await selectProvider();await refreshConfig();await loadGames();startQueuePolling();}catch(err){
+    if(!(await useOfflineSnapshot(err.message))){currentMode="server";$("modeBadge").textContent="Server";showBanner(err.message,"error");showView("setup");}
+  }
   await loadSetup();
   const view=localStorage.getItem("brettspielregal-last-view");if(["collection","import","setup"].includes(view))showView(view);
   if(pendingMagicImport){const p=pendingMagicImport;pendingMagicImport=null;await processMagicImport(p);}

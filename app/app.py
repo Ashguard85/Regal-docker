@@ -1,11 +1,14 @@
 import os
 import uuid
+import shutil
+import sqlite3
+import secrets
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from io import BytesIO
 
-from . import db, attachments
+from . import db, attachments, zip_backup
 from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 from .research_search import search_provider_name as auto_search_provider_name, provider_status as search_provider_status, ResearchSearchError
@@ -54,20 +57,33 @@ def create_app(test_config=None):
     def security_headers(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
         origin = request.headers.get("Origin")
         allowed_origins, _invalid_origins = _configured_cors_origins()
         if origin and origin.rstrip("/") in set(allowed_origins):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret, X-Brettspielregal-Restore-Token"
             response.headers["Access-Control-Max-Age"] = "600"
         return response
 
     @app.route("/health", methods=["GET"])
     def health():
         return jsonify(status="ok")
+
+    def _storage_diagnostics():
+        try:
+            usage = shutil.disk_usage(db.DATA_DIR)
+            with db.connect() as conn:
+                integrity=conn.execute("PRAGMA quick_check(1)").fetchone()[0]
+                schema=conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+                games=conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+                files=conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
+            latest=sorted(db.BACKUP_DIR.glob("full-*.zip"),key=lambda f:f.stat().st_mtime,reverse=True)
+            return {"status":"ok" if integrity=="ok" else "error","database":"ok" if integrity=="ok" else "error","schema_version":schema,"games":games,"attachments":files,"free_bytes":usage.free,"last_full_backup":latest[0].stat().st_mtime if latest else None,"restore_pending":(db.DATA_DIR/"restore-pending.zip").exists()}
+        except (OSError,sqlite3.DatabaseError) as exc:
+            return {"status":"error","error":type(exc).__name__}
 
     @app.route("/api/system/status", methods=["GET", "OPTIONS"])
     def system_status():
@@ -91,7 +107,7 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="9.0.0",
+            version="9.1.1",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
@@ -99,6 +115,8 @@ def create_app(test_config=None):
             search=search,
             research={"pipeline":"v8.8-postfetch-ranked-field-evidence","bgg_enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"},"bgg_configured":bool(os.environ.get("BGG_API_TOKEN", "").strip())},
             cors=_cors_status_for_request(),
+            bgg={"status":"configured" if os.environ.get("BGG_API_TOKEN", "").strip() else "no_token", "enabled":os.environ.get("BGG_ENABLED", "true").lower() in {"1","true","yes","on"}},
+            storage=_storage_diagnostics(),
         )
 
     @app.route("/api/config", methods=["GET", "OPTIONS"])
@@ -108,7 +126,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="9.0.0",
+            version="9.1.1",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -121,6 +139,36 @@ def create_app(test_config=None):
             **public_ai,
         )
 
+
+    @app.route("/api/ai/approval-settings", methods=["GET", "PUT", "OPTIONS"])
+    def ai_approval_settings():
+        if request.method == "OPTIONS": return ("", 204)
+        if request.method == "GET": return jsonify(db.get_auto_approval_settings())
+        try: return jsonify(db.save_auto_approval_settings(request.get_json(silent=True) or {}))
+        except ValueError as exc: return jsonify(error=str(exc)), 400
+
+    @app.route("/api/backup/full", methods=["GET", "OPTIONS"])
+    def full_zip_backup():
+        if request.method == "OPTIONS": return ("", 204)
+        try:
+            target = zip_backup.create_zip(db.DATA_DIR)
+            response = send_file(target, as_attachment=True, download_name=target.name, mimetype="application/zip")
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
+        except (ValueError, OSError) as exc: return jsonify(error=str(exc)), 400
+
+    @app.route("/api/backup/full/restore", methods=["POST", "OPTIONS"])
+    def stage_zip_restore():
+        if request.method == "OPTIONS": return ("", 204)
+        request.max_content_length = zip_backup.MAX_ZIP_BYTES + 1024 * 1024
+        token = os.environ.get("BACKUP_RESTORE_TOKEN", "").strip()
+        if len(token) < 20: return jsonify(error="Für den vollständigen Restore muss BACKUP_RESTORE_TOKEN (mindestens 20 Zeichen) in Portainer gesetzt werden."), 503
+        if not secrets.compare_digest(request.headers.get("X-Brettspielregal-Restore-Token", ""), token): return jsonify(error="Ungültiger Restore-Schlüssel."), 403
+        if request.form.get("confirmation") != "RESTORE": return jsonify(error="Bestätigung RESTORE erforderlich."), 400
+        upload = request.files.get("file")
+        if not upload: return jsonify(error="ZIP-Datei fehlt."), 400
+        try: return jsonify(zip_backup.stage_restore(db.DATA_DIR, upload.stream)), 202
+        except (ValueError, OSError, zip_backup.zipfile.BadZipFile) as exc: return jsonify(error=str(exc)), 400
 
     @app.route("/api/research-settings", methods=["GET", "PUT", "POST", "OPTIONS"])
     def research_settings():

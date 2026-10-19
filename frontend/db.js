@@ -1,5 +1,5 @@
 const DB_NAME = "brettspielregal-local";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 function reqToPromise(req){return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
 function txDone(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("IndexedDB transaction aborted"));});}
@@ -20,6 +20,8 @@ export async function openDb(){
       if(!games.indexNames.contains("ean"))games.createIndex("ean","ean",{unique:false});
       if(!db.objectStoreNames.contains("settings"))db.createObjectStore("settings",{keyPath:"key"});
       if(!db.objectStoreNames.contains("secrets"))db.createObjectStore("secrets",{keyPath:"key"});
+      if(!db.objectStoreNames.contains("offline_games"))db.createObjectStore("offline_games",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("offline_covers"))db.createObjectStore("offline_covers",{keyPath:"id"});
       if(!db.objectStoreNames.contains("attachments")){
         const files=db.createObjectStore("attachments",{keyPath:"id"});
         files.createIndex("game_id","game_id",{unique:false});
@@ -72,5 +74,31 @@ export async function importGamesAndAttachments(games,attachments,strategy){
   if(strategy==="replace"){gs.clear();files.clear();}
   for(const game of games)gs.put(game);
   for(const file of attachments)files.put(file);
+  await txDone(tx);db.close();
+}
+
+// A separate explicitly user-created read-only server snapshot. No credentials
+// are saved here. LocalProvider games/attachments remain entirely independent.
+export async function readOfflineSnapshot(){
+  const db=await openDb(),tx=db.transaction(["offline_games","offline_covers","settings"],"readonly");
+  const done=txDone(tx);
+  const gamesReq=tx.objectStore("offline_games").getAll();
+  const coversReq=tx.objectStore("offline_covers").getAll();
+  const metaReq=tx.objectStore("settings").get("offline_snapshot_meta");
+  const [games,covers,meta]=await Promise.all([reqToPromise(gamesReq),reqToPromise(coversReq),reqToPromise(metaReq)]);
+  await done;db.close();return {games,covers,meta:meta?.value||null};
+}
+export async function saveOfflineSnapshot(games,covers){
+  const db=await openDb(),tx=db.transaction(["offline_games","offline_covers","settings"],"readwrite");
+  const gs=tx.objectStore("offline_games"),cs=tx.objectStore("offline_covers");gs.clear();cs.clear();
+  for(const g of games)gs.put(g);
+  for(const c of covers)cs.put(c);
+  const meta={saved_at:new Date().toISOString(),games:games.length,covers:covers.length};
+  tx.objectStore("settings").put({key:"offline_snapshot_meta",value:meta});
+  await txDone(tx);db.close();return meta;
+}
+export async function clearOfflineSnapshot(){
+  const db=await openDb(),tx=db.transaction(["offline_games","offline_covers","settings"],"readwrite");
+  tx.objectStore("offline_games").clear();tx.objectStore("offline_covers").clear();tx.objectStore("settings").delete("offline_snapshot_meta");
   await txDone(tx);db.close();
 }

@@ -1,4 +1,4 @@
-import {getAllGames,getGame,putGame,deleteGame,getAllAttachments,getAttachment,putAttachment,deleteAttachment,importGamesAndAttachments,getSetting,setSetting,getSecret,setSecret,clearSecrets} from "./db.js";
+import {getAllGames,getGame,putGame,deleteGame,getAllAttachments,getAttachment,putAttachment,deleteAttachment,importGamesAndAttachments,getSetting,setSetting,getSecret,setSecret,clearSecrets,readOfflineSnapshot,saveOfflineSnapshot,clearOfflineSnapshot} from "./db.js";
 
 export const BACKUP_FORMAT="brettspielregal-backup";
 export const BACKUP_VERSION=5;
@@ -161,9 +161,35 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"9.0.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"9.1.1",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
+
+export class OfflineProvider{
+  constructor(snapshot){this.kind="offline";this.rows=snapshot.games||[];this.covers=new Map((snapshot.covers||[]).map(c=>[c.id,c.blob]));this.savedAt=snapshot.meta?.saved_at||"";}
+  list(){return Promise.resolve(this.rows.map(g=>({...g})));}
+  get(id){const g=this.rows.find(g=>g.id===id);return g?Promise.resolve({...g}):Promise.reject(new Error("Spiel nicht im Offline-Regal."));}
+  async getAttachmentBlob(_gameId,attachmentId){const b=this.covers.get(attachmentId);if(!b)throw new Error("Dieser Anhang wurde nicht offline gespeichert.");return b;}
+  attachmentImageUrl(){return "";}
+  async listAttachments(gameId){return (this.rows.find(g=>g.id===gameId)?.attachments||[]).filter(a=>a.kind==="image"&&this.covers.has(a.id));}
+  _deny(){throw new Error("Offline-Regal ist schreibgeschützt. Bitte wieder mit dem Server verbinden.");}
+  create(){return this._deny();}update(){return this._deny();}remove(){return this._deny();}addAttachment(){return this._deny();}removeAttachment(){return this._deny();}renameLocation(){return this._deny();}archiveAsset(){return this._deny();}enqueueEnrichment(){return this._deny();}
+}
+
+export async function createOfflineSnapshot(server,progress=()=>{}){
+  const games=await server.list(),covers=[];let complete=0;
+  for(const game of games){
+    // Only local image attachments can be exported reliably and privately.
+    const match=(game.attachments||[]).find(a=>a.id===game.cover_attachment_id&&a.kind==="image")||(game.attachments||[]).find(a=>a.kind==="image");
+    if(match){
+      try{const blob=await server.getAttachmentBlob(game.id,match.id);if(blob.type?.startsWith("image/")&&blob.size<=10*1024*1024)covers.push({id:match.id,blob});}
+      catch{/* Card stays readable without cover. */}
+    }
+    complete++;progress(complete,games.length);
+  }
+  return saveOfflineSnapshot(games,covers);
+}
+export {readOfflineSnapshot,clearOfflineSnapshot};
 
 export class ServerProvider{
   constructor(baseUrl,creds={}){this.kind="server";this.baseUrl=(baseUrl||"").replace(/\/$/,"");this.creds=creds;}
@@ -178,14 +204,18 @@ export class ServerProvider{
       if(text&&!body)throw new Error("Der Server hat eine ungültige Antwort geliefert.");return body;
     }catch(err){if(err.name==="AbortError")throw new Error("Zeitüberschreitung beim Serverzugriff.");if(err instanceof TypeError)throw new Error("Server nicht erreichbar oder Anfrage durch CORS/Cloudflare blockiert.");throw err;}finally{clearTimeout(timer);}
   }
-  async blobRequest(path){
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);
+  async blobRequest(path,timeoutMs=60000){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
     try{
       const res=await fetch(this.url(path),{headers:this.headers(),signal:controller.signal,credentials:this.baseUrl?"omit":"same-origin",cache:"no-store"});
       if(!res.ok){let data={};try{data=await res.json();}catch{}throw new Error(data.error||`Datei konnte nicht geladen werden (${res.status}).`);}
       return await res.blob();
     }finally{clearTimeout(timer);}
   }
+  getApprovalSettings(){return this.request("/api/ai/approval-settings");}
+  saveApprovalSettings(enabled,fields){return this.request("/api/ai/approval-settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,fields})});}
+  downloadFullZip(){return this.blobRequest("/api/backup/full",300000);}
+  restoreFullZip(file,adminToken){const form=new FormData();form.append("file",file,file.name);form.append("confirmation","RESTORE");return this.request("/api/backup/full/restore",{method:"POST",headers:{"X-Brettspielregal-Restore-Token":adminToken},body:form,timeoutMs:240000});}
   renameLocation(oldName,newName){return this.request("/api/locations/rename",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({old:oldName,new:newName})});}
   archiveAsset(gameId,kind,url){return this.request(`/api/games/${encodeURIComponent(gameId)}/archive`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind,url}),timeoutMs:60000});}
   listAttachments(gameId){return this.request(`/api/games/${encodeURIComponent(gameId)}/attachments`);}
