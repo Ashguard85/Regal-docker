@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#16352a">
+  <meta name="referrer" content="no-referrer">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Brettspiele">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'">
+  <title>Brettspielregal</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <div>
+          <p class="eyebrow">Meine Sammlung</p>
+          <h1 id="appTitle">Brettspielregal</h1>
+        </div>
+      </div>
+      <span id="modeBadge" class="mode-badge">…</span>
+    </header>
+
+    <button id="quickAddFab" class="quick-add-fab" type="button" aria-label="Schnell erfassen" title="Spiel schnell erfassen">＋</button>
+
+    <main id="mainContent" class="content" tabindex="-1">
+      <section id="viewCollection" class="view active" aria-labelledby="collectionHeading">
+        <div class="collection-hero">
+          <div class="collection-copy">
+            <p class="hero-kicker">Dein persönliches Spieleregal</p>
+            <div class="section-head">
+              <div><h2 id="collectionHeading">Brettspiele</h2><p id="collectionCount" class="muted">0 Spiele</p></div>
+              <button id="addGameButton" class="button primary add-button"><span aria-hidden="true">＋</span> Spiel</button>
+            </div>
+            <p class="hero-text">Schnell finden, was du besitzt – inklusive Regeln, Cover und wichtigen Spieldaten.</p>
+          </div>
+        </div>
+        <label class="search-box"><span class="sr-only">Sammlung durchsuchen</span><span class="search-icon" aria-hidden="true"></span><input id="searchInput" type="search" placeholder="Titel, Verlag, Lagerort, Autor oder Tag suchen …" autocomplete="off"></label>
+        <div class="collection-toolbar" aria-label="Sammlungsansicht wählen">
+          <div class="view-toggle" role="group" aria-label="Sammlungsansicht">
+            <button id="viewListButton" class="view-pill active" type="button" aria-pressed="true">Liste</button>
+            <button id="viewShelfButton" class="view-pill" type="button" aria-pressed="false">Regal</button>
+          </div>
+          <button id="tagFilterButton" class="button tag-filter-button" type="button" aria-expanded="false">Tags filtern <span id="tagFilterCount" class="filter-count hidden">0</span></button>
+        </div>
+        <div id="tagFilterPanel" class="tag-filter-panel hidden">
+          <div class="tag-filter-head"><div><strong>Sammlung filtern</strong><p class="hint">Innerhalb einer Kategorie gilt ODER, zwischen Kategorien UND.</p></div><button id="clearTagFiltersButton" class="button subtle" type="button">Zurücksetzen</button></div>
+          <div id="tagFilterGroups" class="tag-filter-groups"></div>
+        </div>
+        <details id="advancedFilterPanel" class="advanced-filters"><summary>Weitere Filter <span id="activeAdvancedFilters"></span></summary>
+          <div class="advanced-filter-grid">
+            <label>Spielerzahl<select id="filterPlayers"><option value="">Beliebig</option><option value="1">1 Spieler</option><option value="2">2 Spieler</option><option value="3">3 Spieler</option><option value="4">4 Spieler</option><option value="5">5 Spieler</option><option value="6">6 Spieler</option><option value="7">7+ Spieler</option></select></label>
+            <label>Maximale Spieldauer<select id="filterDuration"><option value="">Beliebig</option><option value="30">30 Minuten</option><option value="45">45 Minuten</option><option value="60">60 Minuten</option><option value="90">90 Minuten</option><option value="120">120 Minuten</option></select></label>
+            <label>Alter (geeignet ab)<select id="filterAge"><option value="">Beliebig</option><option value="6">6 Jahre</option><option value="8">8 Jahre</option><option value="10">10 Jahre</option><option value="12">12 Jahre</option><option value="14">14 Jahre</option></select></label>
+            <label>Lagerort<select id="filterLocation"><option value="">Alle Lagerorte</option></select></label>
+            <label>Fehlende Daten<select id="filterMissing"><option value="">Alles anzeigen</option><option value="cover">Ohne lokales Cover</option><option value="rules">Ohne gespeicherte Anleitung</option><option value="bgg">Ohne BGG-ID</option></select></label>
+            <button id="resetAdvancedFilters" type="button" class="button subtle">Filter zurücksetzen</button>
+          </div>
+        </details>
+        <div id="statusBanner" class="status-banner hidden" role="status"></div>
+        <div id="gameList" class="game-list"></div>
+        <div id="emptyState" class="empty-state hidden">
+          <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
+          <strong>Noch keine Brettspiele</strong>
+          <p>Lege dein erstes Spiel an oder übernimm Daten bequem aus einem externen Link.</p>
+          <button id="emptyAddButton" class="button primary">Erstes Spiel erfassen</button>
+        </div>
+      </section>
+
+      <section id="viewImport" class="view" aria-labelledby="importHeading">
+        <div class="import-hero">
+          <div>
+            <p class="eyebrow">Schnellerfassung & Automatik</p>
+            <h2 id="importHeading">Spiele importieren</h2>
+            <p>Erfasse nur Titel oder EAN. Der Docker-Worker recherchiert die Spiele anschließend nacheinander und ergänzt die Daten im Hintergrund.</p>
+          </div>
+          <span id="workerBadge" class="worker-badge">Worker …</span>
+        </div>
+
+        <div id="importUnavailable" class="import-unavailable hidden">
+          <strong>KI-Hintergrundrecherche nicht verfügbar</strong>
+          <p>Du kannst Spiele weiterhin ohne KI schnell erfassen. Für automatische Recherche müssen Server-KI und Hintergrund-Ergänzung aktiv sein.</p>
+        </div>
+
+        <form id="quickCaptureForm" class="import-card">
+          <div class="import-card-head">
+            <div><p class="eyebrow">Schnellerfassung</p><h3>Mehrere Spiele auf einmal</h3></div>
+            <span class="import-step">1</span>
+          </div>
+          <p class="muted">Ein Titel oder eine EAN pro Zeile. Nach dem Einreihen kannst du die App schließen; der Worker arbeitet weiter.</p>
+          <label class="quick-capture-label">Titel / EANs<textarea id="quickCaptureInput" rows="8" maxlength="12000" placeholder="Sky Team
+4002051698973
+Cascadia
+Dorfromantik"></textarea></label>
+          <label class="quick-capture-label">Lagerort für diese Einträge (optional)<input id="quickCaptureLocation" maxlength="180" placeholder="z. B. 1. Tablar"></label>
+          <label class="research-toggle"><input id="quickCaptureUseAi" type="checkbox" checked><span><strong>Mit KI recherchieren</strong><small>Aus: Spiele werden nur erfasst und nicht in die Hintergrund-Warteschlange gelegt.</small></span></label>
+          <div class="import-form-actions"><span class="hint">Bis zu 100 Einträge pro Vorgang. Bei aktiver KI erscheinen Rechercheergebnisse später nur als prüfbare Vorschläge.</span><button id="submitQuickCaptureButton" class="button primary" type="submit">Erfassen & recherchieren</button></div>
+        </form>
+
+        <section id="queuePanel" class="queue-panel hidden" aria-labelledby="queueHeading">
+          <div class="queue-head"><div><p class="eyebrow">Hintergrund-Import</p><h3 id="queueHeading">Warteschlange & Prüfung</h3></div><div class="queue-head-actions"><button id="cleanupQueueButton" class="button subtle queue-cleanup-button" type="button">Aufräumen</button><span class="import-step">2</span></div></div>
+          <p id="queueSummary" class="muted">Keine Aufträge.</p>
+          <div id="queueList" class="queue-list"></div>
+        </section>
+      </section>
+
+      <section id="viewSetup" class="view" aria-labelledby="setupHeading">
+        <div class="section-head"><div><h2 id="setupHeading">Setup & Daten</h2><p class="muted">Betriebsmodus, Verbindung und Backups</p></div></div>
+
+        <details open><summary>Betriebsmodus</summary><div class="details-body">
+          <div id="modeChooser" class="mode-chooser">
+            <button class="mode-choice" data-mode="local"><strong>Auf diesem Gerät</strong><span>Lokaler Modus – kein Server nötig</span></button>
+            <button class="mode-choice" data-mode="server"><strong>Mit meinem Server</strong><span>Server-Modus – Docker-Backend verwenden</span></button>
+          </div>
+          <p class="hint">Ein Moduswechsel wechselt nur den aktiven Datenspeicher. Daten werden nicht automatisch synchronisiert oder vermischt.</p>
+        </div></details>
+
+        <details><summary>Verbindung / Server</summary><div class="details-body">
+          <form id="serverConfigForm" class="form-grid">
+            <label>Backend URL<input id="backendUrl" type="url" inputmode="url" placeholder="https://api.example.com" autocomplete="url"></label>
+            <label>Cloudflare Client ID<input id="cfClientId" type="text" autocomplete="off" autocapitalize="none"></label>
+            <label>Cloudflare Client Secret<div class="secret-row"><input id="cfClientSecret" type="password" autocomplete="new-password" placeholder="Neu setzen oder leer lassen"><button id="clearSecretsButton" type="button" class="button subtle">Löschen</button></div></label>
+            <div class="button-row"><button class="button primary" type="submit">Verbindung speichern</button><button id="testConnectionButton" class="button" type="button">Systemstatus prüfen</button></div>
+          </form>
+          <div id="connectionDiagnostics" class="connection-diagnostics" aria-live="polite">
+            <div class="diagnostic-head"><strong>Verbindungsstatus</strong><span id="diagnosticOrigin" class="hint"></span></div>
+            <div class="diagnostic-grid">
+              <div class="diagnostic-row"><span>Backend</span><strong id="diagBackend" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>API</span><strong id="diagApi" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Worker</span><strong id="diagWorker" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>Ollama / KI</span><strong id="diagOllama" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>SearXNG</span><strong id="diagSearxng" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+              <div class="diagnostic-row"><span>CORS</span><strong id="diagCors" class="diagnostic-state neutral">Nicht geprüft</strong></div>
+            </div>
+            <p id="diagnosticHint" class="hint"></p>
+          </div>
+          <p class="hint">Service-Tokens werden nur in IndexedDB auf diesem Gerät gespeichert, nie exportiert und nach dem Speichern nicht wieder vollständig angezeigt.</p>
+        </div></details>
+
+        <details><summary>KI / Link-Auswertung</summary><div class="details-body stack">
+          <p>Aktiver Server-KI-Anbieter: <strong id="aiProviderLabel">–</strong></p>
+          <p id="aiModelLabel" class="muted"></p>
+          <p id="aiVisionModelLabel" class="muted"></p>
+          <p id="aiSearchLabel" class="muted"></p>
+          <p id="autoEnrichLabel" class="muted"></p>
+          <p id="autoSearchLabel" class="muted"></p>
+          <button id="testAiButton" class="button" type="button">KI-Verbindung testen</button>
+          <p class="hint">Ollama wird ausschließlich vom Docker-Backend angesprochen. Die GitHub-Pages-PWA verbindet sich niemals direkt mit Port 11434. Im lokalen Pages-Modus wird keine KI verwendet.</p>
+        </div></details>
+
+        <details id="researchSettingsDetails"><summary>Automatische Recherche – Quellen & Prompt</summary><div class="details-body stack">
+          <p class="hint">Diese Einstellungen gelten nur für den Docker-Hintergrundimport. Technische Werte wie Modellname, Ollama-URL und Timeout bleiben in Portainer.</p>
+          <form id="researchSettingsForm" class="form-grid">
+            <label class="full">Primärquellen – eine Domain pro Zeile
+              <textarea id="primarySourcesInput" rows="7" placeholder="kosmos.de
+ravensburger.de"></textarea>
+              <span class="hint">Diese Domains werden bevorzugt gesucht und gewichtet.</span>
+            </label>
+            <label class="full">Strukturierte Referenzquellen – eine Domain pro Zeile
+              <textarea id="referenceSourcesInput" rows="4" placeholder="boardgamegeek.com"></textarea>
+              <span class="hint">Dienen zur Identifikation und Plausibilitätsprüfung. Englische Inhalte werden vor der Übernahme ins Deutsche normalisiert.</span>
+            </label>
+            <label class="full">Niedrig priorisierte Quellen – eine Domain pro Zeile
+              <textarea id="lowTrustSourcesInput" rows="6" placeholder="spieletest.at
+amazon.de"></textarea>
+              <span class="hint">Dürfen Hinweise liefern, aber nicht allein Titel, EAN, Cover oder Anleitung bestimmen.</span>
+            </label>
+            <label class="full">System-Prompt
+              <textarea id="researchSystemPromptInput" rows="6"></textarea>
+            </label>
+            <label class="full">Recherche-Prompt
+              <textarea id="researchPromptInput" rows="16"></textarea>
+              <span class="hint">Pflicht-Platzhalter: <code>{{QUERY}}</code>, <code>{{CURRENT_GAME}}</code>, <code>{{SOURCES}}</code>, <code>{{EVIDENCE}}</code>. Optional: <code>{{PRIMARY_DOMAINS}}</code>, <code>{{REFERENCE_DOMAINS}}</code>, <code>{{LOW_TRUST_DOMAINS}}</code>, <code>{{ALLOWED_TAGS}}</code>.</span>
+            </label>
+            <div class="full button-row"><button class="button primary" type="submit">Recherche-Einstellungen speichern</button><button id="resetResearchSettingsButton" class="button" type="button">Auf Standard zurücksetzen</button></div>
+            <p id="researchSettingsStatus" class="hint full" role="status"></p>
+          </form>
+          <div class="tag-maintenance-box">
+            <strong>Tag-Pflege</strong>
+            <p class="hint">Entfernt alte Shop-/Navigations-Tags und normalisiert bekannte Synonyme auf die kontrollierte Tag-Liste.</p>
+            <button id="cleanupTagsButton" class="button" type="button">Bestehende Tags bereinigen</button>
+            <p id="cleanupTagsStatus" class="hint" role="status"></p>
+          </div>
+        </div></details>
+
+        <details><summary>Lagerorte verwalten</summary><div class="details-body stack">
+          <p class="hint">Lagerorte wie „Wohnzimmer / 1. Tablar“ werden aus deiner Sammlung ermittelt. Umbenennen aktualisiert alle zugeordneten Spiele nach Bestätigung.</p>
+          <div id="locationManagerList" class="location-manager-list"></div>
+          <label>Bisheriger Lagerort<select id="locationRenameFrom"></select></label>
+          <label>Neuer Lagerort<input id="locationRenameTo" maxlength="180" placeholder="z. B. Wohnzimmer / 2. Tablar"></label>
+          <button id="renameLocationButton" class="button" type="button">Lagerort bei allen Spielen umbenennen</button>
+        </div></details>
+
+        <details><summary>Import / Export</summary><div class="details-body stack">
+          <button id="exportButton" class="button">Backup exportieren</button>
+          <label class="button file-button">Backup importieren<input id="importInput" type="file" accept="application/json,.json"></label>
+          <div id="transferControls" class="stack">
+            <button id="localToServerButton" class="button">Lokale Daten auf Server übertragen</button>
+            <button id="serverToLocalButton" class="button">Serverdaten lokal übernehmen</button>
+          </div>
+          <p class="hint">Backups verwenden das gemeinsame Format <code>brettspielregal-backup</code>, Version 3, einschließlich hochgeladener Bilder und PDF-Anleitungen. Ältere Backups bleiben importierbar. Bei vielen Anhängen kann die JSON-Datei groß werden. Zugangsdaten sind nie enthalten.</p>
+        </div></details>
+
+        <details><summary>Sicherheit & lokale Daten</summary><div class="details-body">
+          <p>Lokale Spiele und Anhänge liegen in IndexedDB auf diesem Gerät. Beim Löschen der PWA, der Website-Daten oder bei Geräteverlust können sie verloren gehen. Im Docker-Modus liegen die Anhänge unter <code>/app/data/attachments</code>; sichere das gesamte Datenvolume.</p>
+          <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
+        </div></details>
+
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.0.0</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Hauptnavigation">
+      <button class="nav-button active" data-view="collection"><span>▦</span><small>Sammlung</small></button>
+      <button class="nav-button" data-view="import"><span>⇩</span><small>Import</small></button>
+      <button class="nav-button" data-view="setup"><span>⚙</span><small>Setup</small></button>
+    </nav>
+  </div>
+
+  <dialog id="quickAddDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2>Schnell erfassen</h2><button id="closeQuickAdd" class="icon-button" type="button" aria-label="Schliessen">×</button></div>
+    <form id="quickAddForm" class="form-grid"><label class="full">Titel oder EAN<input id="quickAddText" maxlength="180" required autocomplete="off" autocapitalize="sentences" placeholder="Scythe oder 4002051684044"></label>
+    <label class="full">Lagerort<input id="quickAddLocation" list="knownLocations" maxlength="180" placeholder="Wohnzimmer / 1. Tablar"></label>
+    <label class="full research-toggle"><input type="checkbox" id="quickAddAi" checked> Im Hintergrund mit KI ergänzen (nur Server)</label>
+    <div class="full button-row"><button class="button primary" type="submit">Sofort zur Sammlung hinzufügen</button></div></form>
+    <div class="quick-add-options"><button id="quickAddLink" class="button" type="button">🔗 Über Link</button><button id="quickAddPhoto" class="button" type="button">📷 Foto hinzufügen</button></div></div></dialog>
+
+  <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions"><label class="button file-button">＋ Dateien hinzufügen<input id="detailAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label><button id="archiveCoverButton" type="button" class="button">Cover lokal archivieren</button><button id="archiveRulesButton" type="button" class="button">PDF lokal archivieren</button><button id="detailReEnrichButton" type="button" class="button hidden">Neu recherchieren</button><span class="spacer"></span><button id="detailApproveButton" type="button" class="button approve hidden">✓ Alle Vorschläge übernehmen</button><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
+
+  <dialog id="gameDialog" class="dialog">
+    <form id="gameForm" method="dialog" class="dialog-card">
+      <div class="dialog-head"><div><p class="eyebrow">Brettspiel</p><h2 id="gameDialogTitle">Spiel erfassen</h2></div><button id="closeGameDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div>
+      <input id="gameId" type="hidden">
+      <div class="form-grid">
+        <label class="full">Titel *<input id="titleInput" required maxlength="180"></label>
+        <label class="full">Quell-Link<input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://…"></label>
+        <label id="newGameResearchRow" class="full research-toggle hidden"><input id="newGameAutoEnrich" type="checkbox" checked><span><strong>Nach dem Speichern mit KI recherchieren</strong><small>Aus: Das Spiel wird nur gespeichert. Du kannst die Recherche später jederzeit in der Detailansicht starten.</small></span></label>
+        <div id="aiImportRow" class="full ai-row"><button id="aiImportButton" type="button" class="button">Daten aus Link vorschlagen</button><button id="aiImageButton" type="button" class="button">Screenshot auslesen</button><input id="aiImageInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple><button id="rulesSearchButton" type="button" class="button">Offizielle Anleitung suchen</button><span class="hint">Text/Link: Qwen · Screenshot/Bild: Gemma Vision · maximal 4 Bilder</span></div>
+        <label class="full">Beschreibung<textarea id="descriptionInput" rows="4" maxlength="6000"></textarea></label>
+        <label>Spieler min.<input id="minPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>
+        <label>Spieler max.<input id="maxPlayersInput" type="number" min="1" max="99" inputmode="numeric"></label>
+        <label>Spieldauer (Min.)<input id="playTimeInput" type="number" min="1" max="9999" inputmode="numeric"></label>
+        <label>Mindestalter<input id="minAgeInput" type="number" min="0" max="99" inputmode="numeric"></label>
+        <label>Verlag<input id="publisherInput" maxlength="180"></label>
+        <label>Lagerort<input id="storageLocationInput" list="knownLocations" maxlength="180" placeholder="z. B. Wohnzimmer / 1. Tablar"><datalist id="knownLocations"></datalist></label>
+        <label>Erscheinungsjahr<input id="yearInput" type="number" min="1800" max="2200" inputmode="numeric"></label>
+        <label>Autor / Designer<input id="designerInput" maxlength="240"></label>
+        <label>EAN / GTIN<input id="eanInput" maxlength="32" inputmode="numeric" autocapitalize="none"></label>
+        <label>BoardGameGeek-ID<input id="bggIdInput" type="number" min="1" max="999999999" inputmode="numeric" placeholder="z. B. 169786"></label>
+        <label class="full">Auszeichnung<input id="awardInput" maxlength="500" placeholder="z. B. Spiel des Jahres 2024"></label>
+        <label class="full">Coverbild-Link<input id="coverUrlInput" type="url" inputmode="url" placeholder="https://…/cover.jpg"></label>
+        <div id="coverPreview" class="full cover-preview hidden"></div>
+        <div class="full attachment-editor">
+          <strong>Bilder und Anleitungen als Dateien</strong>
+          <p class="hint">JPG, PNG, GIF, WebP, HEIC/HEIF und PDF – bis 10 MB pro Datei, maximal 15 pro Spiel. Eigene Bilder können als Cover verwendet werden. Dateien werden beim Speichern hochgeladen.</p>
+          <label class="button file-button">＋ Bilder / PDF auswählen<input id="gameAttachmentInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.pdf" multiple></label>
+          <div id="pendingAttachmentList" class="attachment-editor-list"></div>
+          <div id="existingAttachmentList" class="attachment-editor-list"></div>
+          <p id="attachmentFormStatus" class="hint" role="status"></p>
+        </div>
+        <div class="full tag-editor">
+          <div class="tag-editor-head"><strong>Tags</strong><span class="hint">Kontrollierte Tags für Suche und Filter.</span></div>
+          <input id="tagsInput" type="hidden">
+          <div id="tagPicker" class="tag-picker"></div>
+        </div>
+        <label class="full">Anleitungs-Link<input id="rulesUrlInput" type="url" inputmode="url" placeholder="https://…/anleitung.pdf"></label>
+        <label class="full">Anleitung / Kurzregeln<textarea id="rulesTextInput" rows="6" maxlength="12000"></textarea></label>
+        <label class="full">Notizen<textarea id="notesInput" rows="3" maxlength="6000"></textarea></label>
+      </div>
+      <div class="dialog-actions"><button id="deleteGameButton" type="button" class="button danger hidden">Löschen</button><span class="spacer"></span><button id="cancelGameButton" type="button" class="button">Abbrechen</button><button type="submit" class="button primary">Speichern</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="firstRunDialog" class="dialog">
+    <div class="dialog-card compact"><div class="dialog-head"><div><p class="eyebrow">Erster Start</p><h2>Wie möchtest du die App verwenden?</h2></div></div>
+      <div class="mode-chooser first-run">
+        <button class="mode-choice" data-first-mode="local"><strong>Auf diesem Gerät</strong><span>Lokaler Modus – kein Server nötig</span></button>
+        <button class="mode-choice" data-first-mode="server"><strong>Mit meinem Server</strong><span>Docker-Backend verwenden</span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="messageDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2 id="messageTitle">Hinweis</h2><button id="closeMessageButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="messageBody" class="message-body"></div><div class="dialog-actions"><span class="spacer"></span><button id="messageOkButton" class="button primary" type="button">OK</button></div></div></dialog>
+
+
+
+  <dialog id="queueCleanupDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><div><p class="eyebrow">Hintergrund-Import</p><h2>Warteschlange aufräumen</h2></div><button id="closeQueueCleanupButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div class="message-body queue-cleanup-options"><p>Spiele in deiner Sammlung bleiben immer erhalten. Ein gerade laufender Auftrag wird ebenfalls nie gelöscht.</p><button type="button" class="cleanup-choice" data-cleanup-mode="history"><strong>Fehler & Verlauf löschen</strong><span>Entfernt fehlgeschlagene, abgebrochene, erledigte und bereits geprüfte Einträge.</span></button><button type="button" class="cleanup-choice" data-cleanup-mode="including_review"><strong>Auch offene Prüfungen löschen</strong><span>Verwirft zusätzlich noch nicht freigegebene temporäre KI-Vorschläge.</span></button><button type="button" class="cleanup-choice danger-choice" data-cleanup-mode="all_non_running"><strong>Alles außer laufendem Auftrag leeren</strong><span>Entfernt zusätzlich wartende Recherchen. Diese werden danach nicht mehr ausgeführt.</span></button></div></div></dialog>
+
+  <dialog id="metadataPreviewDialog" class="dialog"><div class="dialog-card"><div class="dialog-head"><div><p class="eyebrow">Import-Vorschau</p><h2 id="metadataPreviewTitle">Gefundene Daten prüfen</h2></div><button id="closeMetadataPreviewButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="metadataPreviewBody" class="message-body"></div><div class="dialog-actions"><button id="cancelMetadataPreviewButton" class="button" type="button">Abbrechen</button><span class="spacer"></span><button id="applyMetadataPreviewButton" class="button primary" type="button">Vorschläge übernehmen</button></div></div></dialog>
+
+  <dialog id="strategyDialog" class="dialog"><div class="dialog-card compact"><div class="dialog-head"><h2>Import-Vorschau</h2><button id="closeStrategyButton" class="icon-button" type="button" aria-label="Schließen">×</button></div><div id="strategyBody" class="message-body"></div><div class="dialog-actions"><button id="replaceStrategyButton" class="button danger" type="button">Ersetzen</button><span class="spacer"></span><button id="mergeStrategyButton" class="button primary" type="button">Zusammenführen</button></div></div></dialog>
+
+  <script src="./config.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
