@@ -1,4 +1,4 @@
-# Brettspielregal v9.1.3 – Portainer
+# Brettspielregal v9.1.4 – Portainer
 
 **Safari EAN-Scanner-Fix (ab v9.1.2):** Die iPhone-PWA liest EAN-13 und EAN-8 jetzt lokal per JavaScript aus Kameraframes; die experimentelle Safari-BarcodeDetector-API ist nicht mehr erforderlich. Für das Update beide Pakete (Docker und gegebenenfalls Pages) aktualisieren. **Keine neue Environment-Variable und keine Datenbankmigration.** Die persistenten `/app/data`-Volumes unverändert weiterverwenden. PWA einmal vollständig schließen und wieder öffnen, damit `brettspielregal-pwa-v9-1-3` aktiv ist.
 
@@ -59,3 +59,10 @@ Keine zusätzlichen Environment-Variablen. Aktualisiere auch die GitHub-Pages-Da
 ## v9.1.3 – Bearbeiten beginnt oben
 
 Reines Frontend-Update: Bearbeitungsdialog startet stets am Anfang, auch nach vorherigem Scrollen oder bei offenen KI-Vorschlägen. Bestehende Volumes, Datenbank und Portainer-Variablen unverändert lassen.
+
+
+## v9.1.4 – Scanner bei iPhone/Safari
+
+Im Scanner wird die Anzahl tatsächlich geprüfter Kamerabilder angezeigt. Neu kann über **„Barcode fotografieren“** ein Einzelbild mit der iPhone-Kamera aufgenommen und lokal analysiert werden. Dies hilft besonders, wenn der Live-Stream unscharf ist oder Safaris experimenteller `BarcodeDetector` keine Treffer liefert. Der Kamera-/Foto-Code ist im Service-Worker-Cache v9.1.4 enthalten.
+
+Keine neuen Portainer-Umgebungsvariablen oder SQLite-Migrationen. Nach dem Deployment die PWA vollständig schließen und den neuen Cache laden lassen. Wenn noch kein Code erkannt wird, den **Scannerstatus einschließlich Kamerauflösung** sowie nach Möglichkeit ein Foto des Barcodes teilen.

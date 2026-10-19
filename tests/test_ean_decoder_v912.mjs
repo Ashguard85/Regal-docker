@@ -64,6 +64,30 @@ for(const value of ['4002051698973','96385074']){
   }
   assert.equal(decodeEanImageData(img),value);
 }
+
+// v9.1.4: skewed / perspective-like barcode stripes and independent scanline confidence.
+// On a handheld iPhone the box is rarely held precisely parallel to the sensor.
+function skewed(original, shift=60){
+  const {data,width,height}=original;
+  const outer=70, w=width+2*outer;
+  const out=new Uint8ClampedArray(w*height*4);
+  for(let y=0;y<height;y++)for(let x=0;x<w;x++){
+    // Barcode tilts across the image: its actual baseline rises from left to right.
+    const dy=Math.round(shift*(x/w-.5));
+    const yy=Math.max(0,Math.min(height-1,y-dy));
+    const xx=x-outer;
+    const v=(xx<0||xx>=width)?230:data[(yy*width+xx)*4];
+    const dst=(y*w+x)*4;
+    out[dst]=out[dst+1]=out[dst+2]=v;out[dst+3]=255;
+  }
+  return {data:out,width:w,height};
+}
+for(const value of ['4002051698973','96385074']){
+  const orig=image(value,4);
+  for(const shift of [16,30,45]){
+    assert.equal(decodeEanImageData(skewed(orig,shift)),value,`skew ${shift} for ${value}`);
+  }
+}
 // High-frequency noisy video frames must NOT be accepted as barcodes, even
 // when some accidental 8-digit strings pass the checksum.
 const noisyWidth=1280,noisyHeight=720,noisy=new Uint8ClampedArray(noisyWidth*noisyHeight*4);

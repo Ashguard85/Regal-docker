@@ -1,8 +1,8 @@
 import {LocalProvider,ServerProvider,OfflineProvider,createOfflineSnapshot,readOfflineSnapshot,clearOfflineSnapshot,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
-import {decodeEanImageData,validEan} from "./ean-scanner.js";
+import {decodeEanImageDataDetailed,validEan} from "./ean-scanner.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.3",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.4",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -78,65 +78,131 @@ function acceptScannedCode(code){
 async function openBarcodeScanner(){
   stopScanner();
   const session=scannerSession;
-  $("barcodeManual").value="";$("barcodeStatus").textContent="Prüfe Kamerazugriff …";
-  $("barcodeDialog").showModal();
+  $("barcodeManual").value="";
+  $("barcodeStatus").textContent="Prüfe Kamerazugriff …";
+  if(!$("barcodeDialog").open)$("barcodeDialog").showModal();
   if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
-    $("barcodeStatus").textContent="Kamera benötigt HTTPS und einen unterstützten Browser. Bitte EAN manuell eingeben.";return;
+    $("barcodeStatus").textContent="Kamera benötigt HTTPS und einen unterstützten Browser. Bitte EAN manuell eingeben oder Foto aufnehmen.";return;
   }
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
     if(session!==scannerSession||!$("barcodeDialog").open){stream.getTracks().forEach(t=>t.stop());return;}
     scannerStream=stream;
     const video=$("barcodeVideo");video.srcObject=stream;await video.play();
     if(session!==scannerSession||!$("barcodeDialog").open){stopScanner();return;}
+    // Continuous autofocus is optional, and Safari may reject its constraint.
+    // Never abort barcode scanning when an unsupported lens feature fails.
+    const track=stream.getVideoTracks()[0];
+    try{
+      const caps=track?.getCapabilities?.()||{};
+      if(caps.focusMode?.includes?.("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+    }catch{}
     scanInProgress=true;
     const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{willReadFrequently:true});
     if(!ctx)throw new Error("Kamerabilder können nicht verarbeitet werden.");
-    let nativeDetector=null;
-    // Safari/iOS bietet BarcodeDetector teils an, erkennt aber keine Codes.
-    // Dort niemals darauf warten: ausschließlich den lokalen Decoder nutzen.
-    // Auf anderen Browsern bleibt der native Decoder eine optionale Ergänzung.
     const isIOS=/iPad|iPhone|iPod/i.test(navigator.userAgent)
       ||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+    let nativeDetector=null;
+    // Safari's experimental BarcodeDetector has been observed to return no
+    // matches, even though its camera preview works. Use the local decoder.
     if(!isIOS&&"BarcodeDetector" in window){
       try{
         const supported=typeof BarcodeDetector.getSupportedFormats==="function"
           ?await BarcodeDetector.getSupportedFormats():["ean_13","ean_8","upc_a"];
-        const formats=["ean_13","ean_8","upc_a","itf"].filter(f=>supported.includes(f));
+        const formats=["ean_13","ean_8","upc_a"].filter(f=>supported.includes(f));
         if(formats.length)nativeDetector=new BarcodeDetector({formats});
-      }catch{/* Kein Problem: der lokale Decoder ist unabhängig davon. */}
+      }catch{}
     }
-    $("barcodeStatus").textContent="EAN-Balken waagrecht und gut beleuchtet in die Mitte halten. Erkennung läuft direkt auf dem iPhone …";
-    let lastValue="",repeats=0,frame=0;
+    let checks=0,lastValue="",matches=0,lastSeenAt=0,frameErrors=0;
+    const describe=()=>`Kamera läuft (${video.videoWidth}×${video.videoHeight}) · ${checks} Bilder geprüft. Strichcode möglichst groß und scharf in den Rahmen halten.`;
+    $("barcodeStatus").textContent=describe();
     const scan=async()=>{
       if(session!==scannerSession||!scanInProgress||!$("barcodeDialog").open)return;
       try{
         if(video.readyState>=2&&video.videoWidth&&video.videoHeight){
-          const scale=Math.min(1,1280/video.videoWidth);
+          // Keep more horizontal pixels than the old 1280px cap: at a typical
+          // arm's-length distance, EAN bars can otherwise be only ~1px wide.
+          const scale=Math.min(1,1920/video.videoWidth);
           const w=Math.max(1,Math.round(video.videoWidth*scale));
           const h=Math.max(1,Math.round(video.videoHeight*scale));
           if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
           ctx.drawImage(video,0,0,w,h);
-          const local=decodeEanImageData(ctx.getImageData(0,0,w,h));
-          if(local&&validEan(local)){
-            repeats=local===lastValue?repeats+1:1;lastValue=local;
-            if(repeats>=2){acceptScannedCode(local);return;}
-          }else{repeats=0;lastValue="";}
-          // Weniger native Aufrufe: Safari kann bei detect(video) hängen.
-          if(nativeDetector&&++frame%5===0){
+          checks++;
+          const local=decodeEanImageDataDetailed(ctx.getImageData(0,0,w,h));
+          if(local?.value&&validEan(local.value)){
+            const now=Date.now();
+            // Never require two *consecutive* successful frames. On iPhones a
+            // sharp frame is often followed by a blurred one while moving.
+            matches=local.value===lastValue&&now-lastSeenAt<=6000?matches+1:1;
+            lastValue=local.value;lastSeenAt=now;
+            if(matches>=2||local.hits>=3){acceptScannedCode(local.value);return;}
+            $("barcodeStatus").textContent=`EAN ${local.value} möglicherweise erkannt – prüfe noch ein zweites Bild …`;
+          }else if(checks%8===0){
+            $("barcodeStatus").textContent=describe();
+          }
+          if(nativeDetector&&checks%6===0){
             const hits=await nativeDetector.detect(video);
             if(session!==scannerSession)return;
             const match=hits.find(x=>validEan(String(x.rawValue||"")));
             if(match){acceptScannedCode(match.rawValue);return;}
           }
         }
-      }catch{/* Einzelne Kameraframes können während Start/Fokus ungültig sein. */}
-      if(session===scannerSession&&scanInProgress)scanTimeout=setTimeout(scan,280);
+      }catch(err){
+        // A silent catch used to leave the preview running forever without
+        // telling the user that Safari could not process camera pixels.
+        frameErrors++;
+        if(frameErrors<=2||frameErrors%12===0){
+          $("barcodeStatus").textContent=`Bildverarbeitung fehlgeschlagen (${frameErrors}×): ${err?.message||"unbekannter Fehler"}. Alternativ Foto aufnehmen.`;
+        }
+      }
+      if(session===scannerSession&&scanInProgress)scanTimeout=setTimeout(scan,230);
     };
     scan();
   }catch(err){
     if(session!==scannerSession)return;
-    stopScanner();$("barcodeStatus").textContent=`Kamera/Erkennung nicht verfügbar: ${err.message}. Bitte EAN manuell eingeben.`;
+    stopScanner();$("barcodeStatus").textContent=`Kamera/Erkennung nicht verfügbar: ${err.message}. Bitte EAN manuell eingeben oder Foto aufnehmen.`;
+  }
+}
+
+async function scanBarcodePhoto(file){
+  if(!file)return;
+  stopScanner();
+  const dialog=$("barcodeDialog");
+  if(!dialog.open)return;
+  if(!file.type.startsWith("image/")||file.size>25*1024*1024){
+    $("barcodeStatus").textContent="Bitte ein Bild bis 25 MB auswählen.";return;
+  }
+  $("barcodeStatus").textContent="Foto wird lokal ausgewertet …";
+  let url="",img=null;
+  try{
+    url=URL.createObjectURL(file);
+    img=new Image();
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve;img.onerror=()=>reject(new Error("Foto konnte nicht geöffnet werden."));
+      img.src=url;
+    });
+    const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{willReadFrequently:true});
+    if(!ctx)throw new Error("Bildauswertung wird nicht unterstützt.");
+    // A still image is sharper than video; try two resolutions, in case
+    // narrow bars disappeared during scaling.
+    for(const maxSide of [1800,2800]){
+      const scale=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+      canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+      canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      const found=decodeEanImageDataDetailed(ctx.getImageData(0,0,canvas.width,canvas.height));
+      if(found?.value&&validEan(found.value)){
+        acceptScannedCode(found.value);return;
+      }
+      // Give the browser a chance to repaint the status on large images.
+      await new Promise(resolve=>requestAnimationFrame(resolve));
+    }
+    $("barcodeStatus").textContent="Auf dem Foto wurde keine gültige EAN erkannt. Näher an den Strichcode gehen, gut beleuchten oder Kamera erneut starten.";
+  }catch(err){
+    $("barcodeStatus").textContent=`Foto konnte nicht ausgewertet werden: ${err?.message||"unbekannter Fehler"}.`;
+  }finally{
+    if(url)URL.revokeObjectURL(url);
+    $("barcodePhotoInput").value="";
   }
 }
 async function downloadFullZip(){
@@ -1156,6 +1222,9 @@ function showView(view){
 
 function bindEvents(){
   $("openScannerButton").addEventListener("click",openBarcodeScanner);
+  $("barcodeRestartButton").addEventListener("click",openBarcodeScanner);
+  $("barcodePhotoButton").addEventListener("click",()=>{stopScanner();$("barcodePhotoInput").click();});
+  $("barcodePhotoInput").addEventListener("change",event=>scanBarcodePhoto(event.target.files?.[0]));
   $("closeBarcode").addEventListener("click",()=>$("barcodeDialog").close());
   $("barcodeDialog").addEventListener("close",stopScanner);
   $("barcodeUseManual").addEventListener("click",()=>acceptScannedCode($("barcodeManual").value));

@@ -11,12 +11,12 @@ def test_scanner_not_gated_behind_experimental_safari_api():
     app = (BASE / 'frontend/app.js').read_text(encoding='utf-8')
     html = (BASE / 'frontend/index.html').read_text(encoding='utf-8')
     sw = (BASE / 'frontend/service-worker.js').read_text(encoding='utf-8')
-    assert 'import {decodeEanImageData,validEan} from "./ean-scanner.js"' in app
+    assert 'import {decodeEanImageDataDetailed,validEan} from "./ean-scanner.js"' in app
     assert 'if(!("BarcodeDetector" in window))' not in app
     assert 'const isIOS=' in app
     assert 'if(!isIOS&&"BarcodeDetector" in window)' in app
     assert 'scannerSession++' in app
-    assert 'repeats>=2' in app
+    assert 'matches>=2||local.hits>=3' in app
     assert './ean-scanner.js' in sw
     assert 'Browser mit BarcodeDetector' not in html
     decoder = (BASE / 'frontend/ean-scanner.js').read_text(encoding='utf-8')

@@ -1,4 +1,4 @@
-/* Brettspielregal v9.1.3 – lokaler EAN/UPC-Scanner für Safari und andere Browser.
+/* Brettspielregal v9.1.4 – lokaler EAN/UPC-Scanner für Safari und andere Browser.
  * EAN-13 / EAN-8 sind reine Strichmuster. Hier werden ausschließlich lokale
  * Kamerapixel gelesen: keine externen Skripte, Dienste oder Foto-Uploads.
  * Die Prüfziffer ist bei jeder Erkennung zwingend gültig.
@@ -120,28 +120,59 @@ function decodeSamples(samples){
   }
   return best;
 }
-/** Process image data from a canvas. Includes portrait/sideways package scanning. */
-export function decodeEanImageData(image){
+/**
+ * Decode an image as EAN-13 or EAN-8 and report independent scanline matches.
+ * Returns null when none of the scanning lines contains a complete valid code.
+ * This function uses only image pixels, never network / device identifiers.
+ */
+export function decodeEanImageDataDetailed(image){
   if(!image||!image.data||!image.width||!image.height)return null;
   const {data,width,height}=image;
-  const lines=[.5,.45,.55,.4,.6,.35,.65,.3,.7,.25,.75,.2,.8];
-  let best=null;
-  for(const vertical of [false,true]){
-    const length=vertical?height:width;
-    if(length<95)continue;
-    for(const fraction of lines){
-      const fixed=Math.floor((vertical?width:height)*fraction);
-      const values=new Uint8Array(length);
-      for(let i=0;i<length;i++){
-        const pos=((vertical?i*width+fixed:fixed*width+i)*4);
-        values[i]=Math.round(data[pos]*.299+data[pos+1]*.587+data[pos+2]*.114);
-      }
-      for(const reversed of [false,true]){
-        const found=decodeSamples(reversed?values.slice().reverse():values);
-        if(found&&(!best||found.error<best.error))best=found;
-        if(best&&best.error<2.5)return best.value;
+  // Real cartons are often held at a slight angle. Scan straight lines first,
+  // then angled ones only if they did not produce enough agreement.
+  const candidates=new Map();
+  const runLines=(fractions,slopes)=>{
+    for(const vertical of [false,true]){
+      const length=vertical?height:width;
+      const breadth=vertical?width:height;
+      if(length<95)continue;
+      for(const fraction of fractions){
+        for(const slope of slopes){
+          const values=new Uint8Array(length);
+          for(let i=0;i<length;i++){
+            const across=Math.max(0,Math.min(breadth-1,Math.round(breadth*(fraction+slope*(i/(length-1)-.5)))));
+            const pos=(vertical?(i*width+across):(across*width+i))*4;
+            values[i]=Math.round(data[pos]*.299+data[pos+1]*.587+data[pos+2]*.114);
+          }
+          let best=decodeSamples(values);
+          const reverse=decodeSamples(values.slice().reverse());
+          if(reverse&&(!best||reverse.error<best.error))best=reverse;
+          if(!best)continue;
+          const entry=candidates.get(best.value)||{value:best.value,hits:0,error:best.error};
+          entry.hits++;
+          entry.error=Math.min(entry.error,best.error);
+          candidates.set(best.value,entry);
+          // Three different lines and a valid checksum offer much stronger
+          // confidence than a single guessed code from a blurry camera frame.
+          if(entry.hits>=3&&entry.error<5.5)return entry;
+        }
       }
     }
-  }
-  return best?.value||null;
+    return null;
+  };
+  const common=[.5,.45,.55,.4,.6,.35,.65,.3,.7,.25,.75];
+  const first=runLines(common,[0]);
+  if(first)return first;
+  // A valid single line is not thrown away just because adjacent scanlines
+  // contain glare/blur. Cross-frame confirmation happens in app.js.
+  const strongest=[...candidates.values()].sort((a,b)=>b.hits-a.hits||a.error-b.error)[0];
+  if(strongest?.hits>=2)return strongest;
+  const tilted=runLines([.5,.4,.6,.3,.7],[-.16,.16,-.35,.35]);
+  if(tilted)return tilted;
+  return [...candidates.values()].sort((a,b)=>b.hits-a.hits||a.error-b.error)[0]||null;
+}
+
+/** Compatibility for previous decoders/tests and consumers. */
+export function decodeEanImageData(image){
+  return decodeEanImageDataDetailed(image)?.value||null;
 }

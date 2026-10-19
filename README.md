@@ -1,4 +1,15 @@
-# Brettspielregal – Docker Fullstack v9.1.3
+# Brettspielregal – Docker Fullstack v9.1.4
+
+## Neu in v9.1.4 – Barcode-Scanner mit Safari-Diagnose und Fotomodus
+
+- Der lokale Decoder vergleicht mehrere Kameralinien und erkennt nun auch etwas schräg gehaltene EAN-13/EAN-8-Codes.
+- **Zwei erfolgreiche Erkennungen innerhalb von sechs Sekunden reichen**; zwischendurch unscharfe Bilder setzen die Bestätigung nicht mehr zurück.
+- Wenn drei unabhängige Scanlinien im selben Kameraframe denselben gültigen Code erkennen, darf der Scanner ihn ebenfalls übernehmen.
+- Höhere Zielauflösung (bis zu 1920 px Breite), optionaler kontinuierlicher Autofokus und verständlicher Status mit Kamerauflösung, ausgewerteten Frames und sichtbaren Fehlern.
+- **„Barcode fotografieren“** kann auf iOS ein hochauflösendes Einzelbild über die native Kamera aufnehmen. Das Foto wird ausschließlich im Browser ausgewertet und nicht hochgeladen.
+- **„Kamera neu starten“** erlaubt einen zweiten Versuch, ohne den Dialog zu schließen.
+- Kamera-Berechtigung, HTTPS und lokaler IndexedDB-Modus bleiben unverändert. Keine neue Migration oder Portainer-Variable.
+
 
 ## Neu in v9.1.3 – Bearbeiten immer oben öffnen
 

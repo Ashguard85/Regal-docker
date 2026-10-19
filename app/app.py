@@ -107,7 +107,7 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="9.1.3",
+            version="9.1.4",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
@@ -126,7 +126,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="9.1.3",
+            version="9.1.4",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,

@@ -241,7 +241,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.1.3</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.1.4</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -262,10 +262,12 @@ amazon.de"></textarea>
   <dialog id="barcodeDialog" class="dialog"><div class="dialog-card compact">
     <div class="dialog-head"><h2>EAN mit Kamera scannen</h2><button id="closeBarcode" type="button" class="icon-button" aria-label="Schließen">×</button></div>
     <video id="barcodeVideo" autoplay muted playsinline class="barcode-video" aria-label="Kamerabild für Barcode-Erkennung"></video>
+    <div class="barcode-guidance" aria-hidden="true"><span>Barcode in die Bildmitte halten</span></div>
     <p id="barcodeStatus" class="hint" role="status">Kamera wird gestartet …</p>
+    <div class="barcode-scan-actions"><button type="button" class="button subtle" id="barcodeRestartButton">↻ Kamera neu starten</button><button type="button" class="button" id="barcodePhotoButton">📸 Barcode fotografieren</button><input type="file" id="barcodePhotoInput" accept="image/*" capture="environment" hidden></div>
     <label>EAN manuell eingeben<input id="barcodeManual" inputmode="numeric" pattern="[0-9]{8,14}" maxlength="14" placeholder="8, 12, 13 oder 14 Ziffern"></label>
     <button type="button" id="barcodeUseManual" class="button primary">EAN übernehmen</button>
-    <p class="hint">Die Kamera benötigt HTTPS oder localhost. Die Erkennung von EAN-13, EAN-8 und UPC-A läuft lokal auf deinem Gerät – auch ohne Safaris experimentellen BarcodeDetector. Kamera ruhig halten und den Strichcode möglichst groß zeigen.</p>
+    <p class="hint">Live-Erkennung und Fotoauswertung laufen lokal auf deinem Gerät – ohne externe Dienste. Bei schlechtem Autofokus den Strichcode näher halten oder mit „Barcode fotografieren“ ein scharfes Einzelbild aufnehmen. EAN-13, EAN-8 und UPC-A werden unterstützt.</p>
   </div></dialog>
 
   <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions detail-readonly-actions"><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>

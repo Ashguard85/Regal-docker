@@ -696,3 +696,9 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 .edit-attachment-actions .button { min-height:35px; padding:7px 9px; }
 .review-readonly-hint { color:var(--muted); font-size:.86rem; margin:0; padding:11px 12px; background:#f2f5f1; border-radius:12px; border:1px solid var(--border); }
 @media(max-width:560px) { .edit-attachment-actions { width:100%; justify-content:flex-start; } .attachment-editor .attachment-row { flex-wrap:wrap; } .edit-tools-buttons .button { flex:1 1 100%; } }
+
+/* v9.1.4: eindeutige Scanner-Führung, auch in Safari */
+.barcode-scan-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.barcode-scan-actions .button{flex:1 1 140px}
+.barcode-guidance{text-align:center;font-size:.74rem;color:var(--muted);margin:-2px 0 6px}
+#barcodeStatus{min-height:3em;line-height:1.4;overflow-wrap:anywhere}

@@ -1,14 +1,7 @@
-# Testbericht – Brettspielregal v9.1.3
+# Testbericht – Brettspielregal v9.1.4
 
-- **84 nicht-Flask-basierte Tests bestanden**, darunter die zwei neuen v9.1.3-Scrolltests.
-- Zwei neue Tests sichern Scanner-Integration, Kamera-Abbruch und die Unabhängigkeit von Safaris `BarcodeDetector` ab.
-- Node.js-Tests dekodieren EAN-13 und EAN-8, auch mit Drehung, unterschiedlichen Strichbreiten, Hintergrund und ungleichmäßiger Beleuchtung; ungültige Prüfziffern werden zurückgewiesen.
-- Zusätzlich: JavaScript-Syntax, Python-Compile, PWA-Cache, DOM-Element-Referenzen und Docker-/Pages-Frontend-Gleichheit geprüft.
-- **Nicht durchführbar:** echte iPhone-Kamera-End-to-End-Prüfung und Flask-basierte Integrationstests (Flask fehlt im Build-Container).
-
-
-## v9.1.3: Regressionstest Bearbeitungsdialog
-
-- Formular-Scrollcontainer und Dialog werden beim Öffnen eines vorhandenen Spiels auf Position 0 gesetzt.
-- Fokussierung des Dialogtitels mit `preventScroll` verhindert iOS-Safari-Sprünge in das Titelfeld, auch bei geöffnetem Recherche-/KI-Bereich.
-- Neu erfassen und Bearbeiten nutzen weiterhin denselben Dialog; nur der Autofokus beim Bearbeiten entfällt.
+- **87 nicht-Flask-basierte Python-Tests bestanden**, einschließlich drei neuer Tests für nicht aufeinanderfolgende Scan-Treffer, Foto-Capture und PWA-Versionierung.
+- Node.js-Decoder-Tests für synthetische EAN-13/EAN-8-Bilder einschließlich gedrehter und schräger Barcodes sowie Bildrauschen: bestanden.
+- JS-Syntax und Python-Compile: bestanden.
+- CSS-/Manifest-/Portainer-YAML-Prüfung, alle DOM-ID-Referenzen und Docker-/Pages-Frontend-Parität beim Packaging geprüft.
+- **Nicht ausführbar:** Flask-Integrationstests (Flask-Paket fehlt in der Build-Umgebung) und echter Kamera-Test mit Safari/iPhone. Das praktische Erkennungsverhalten bleibt vor Ort zu prüfen.

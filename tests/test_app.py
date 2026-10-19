@@ -30,7 +30,7 @@ def test_health_config_and_crud():
         assert system.json["cors"]["allowed"] is True
         assert system.json["search"]["status"] == "disabled"
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "9.1.3"
+        assert cfg["version"] == "9.1.4"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
