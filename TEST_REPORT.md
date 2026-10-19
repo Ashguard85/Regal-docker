@@ -1,15 +1,14 @@
-# Test Report – v9.1.1
+# Testbericht – Brettspielregal v9.1.3
 
-- **80 nicht-Flask-basierte Tests bestanden** (77 vorhandene und 3 zusätzliche UI-Trennungstests).
-- Neue Tests verifizieren den Anzeigedialog ohne mutierende Aktionen; den Bearbeitungsdialog mit Archivieren, Cover-Auswahl, Löschen und KI-Freigabe; außerdem die Weiterleitung der Warteschlange in den Editor.
-- Python-, JS-, CSS-, HTML-/DOM-, Manifest- und YAML-Checks sowie Docker-/Pages-Parität und ZIP-Integrität werden beim Release geprüft.
-- **Nicht ausgeführt:** 8 Flask-Integrationstests (Flask ist in dieser Umgebung nicht installiert), kein echter iPhone-/Portainer-Laufzeittest.
+- **84 nicht-Flask-basierte Tests bestanden**, darunter die zwei neuen v9.1.3-Scrolltests.
+- Zwei neue Tests sichern Scanner-Integration, Kamera-Abbruch und die Unabhängigkeit von Safaris `BarcodeDetector` ab.
+- Node.js-Tests dekodieren EAN-13 und EAN-8, auch mit Drehung, unterschiedlichen Strichbreiten, Hintergrund und ungleichmäßiger Beleuchtung; ungültige Prüfziffern werden zurückgewiesen.
+- Zusätzlich: JavaScript-Syntax, Python-Compile, PWA-Cache, DOM-Element-Referenzen und Docker-/Pages-Frontend-Gleichheit geprüft.
+- **Nicht durchführbar:** echte iPhone-Kamera-End-to-End-Prüfung und Flask-basierte Integrationstests (Flask fehlt im Build-Container).
 
 
-- **77 nicht-Flask-basierte Tests bestanden** (73 aus v9.0 + vier zusätzliche v9.1-Regressionstests).
-- ZIP: Manifest-Prüfsummen, Dateipfade, SQLite-Integrität, vollständiger Restore und Sicherheitsbackup geprüft.
-- KI: Standard aus; nicht erlaubte Felder abgewiesen; `primary`-Belege werden freigegeben, Widersprüche nicht.
-- UI-Quellcode: Kamera-Start/Stop, manueller EAN-Fallback, Offline-Lesemodus, Restore-/Diagnoseelemente vorhanden.
-- Python- und JavaScript-Syntax, CSS, Manifest, YAML, DOM-ID-Verweise, Shared-Frontend-Parität und ZIP-Integrität werden vor Paketierung geprüft.
+## v9.1.3: Regressionstest Bearbeitungsdialog
 
-**Nicht vollständig ausführbar:** Flask-API-Integrationstests (`test_app.py`, `test_attachments_v6.py`) benötigen Flask, das in der Build-Umgebung nicht installiert ist. Ein realer iPhone-/Portainer-End-to-End-Test ist ebenfalls nicht möglich. Die neuen API-Endpunkte wurden daher nur durch Syntax- und Modultests geprüft.
+- Formular-Scrollcontainer und Dialog werden beim Öffnen eines vorhandenen Spiels auf Position 0 gesetzt.
+- Fokussierung des Dialogtitels mit `preventScroll` verhindert iOS-Safari-Sprünge in das Titelfeld, auch bei geöffnetem Recherche-/KI-Bereich.
+- Neu erfassen und Bearbeiten nutzen weiterhin denselben Dialog; nur der Autofokus beim Bearbeiten entfällt.

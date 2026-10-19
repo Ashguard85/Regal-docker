@@ -1,4 +1,23 @@
-# Brettspielregal – Docker Fullstack v9.1.1
+# Brettspielregal – Docker Fullstack v9.1.3
+
+## Neu in v9.1.3 – Bearbeiten immer oben öffnen
+
+- Beim Öffnen eines bestehenden Spiels im **Bearbeitungsmodus** startet der Dialog jetzt immer am Anfang. Die zuvor benutzte Scrollposition wird nicht übernommen.
+- Auf dem iPhone wird beim Bearbeiten nicht mehr automatisch das Titelfeld fokussiert; dadurch springt Safari bei langen oder geöffneten KI-Bereichen nicht mehr nach unten.
+- Die Scrollposition wird am eigentlichen Formular-Scrollcontainer unmittelbar beim Öffnen und erneut im nächsten Animationsframe zurückgesetzt.
+- Die Position der dahinterliegenden Sammlung bleibt unverändert. **Keine Datenbankmigration und keine neuen Umgebungsvariablen.**
+
+## Neu in v9.1.2 – Safari EAN-Scanner repariert
+
+- Die Kamera und die Erkennung sind jetzt unabhängig von der experimentellen Safari-`BarcodeDetector`-API.
+- **EAN-13 und EAN-8** (UPC-A als EAN-13 mit führender Null) werden aus Kameraframes **direkt auf dem Gerät** gelesen. Es werden keine Bilder hochgeladen und kein externer Scan-Dienst benutzt.
+- Der kleine Decoder liegt als eigenständige lokale Datei `ean-scanner.js` bei und wird zusammen mit der PWA offline gecacht. Es werden keine Drittanbieter-CDN-Skripte benötigt.
+- Native `BarcodeDetector`-Erkennung bleibt bei anderen Browsern als zusätzliche Möglichkeit. Auf iPhone/iPad wird die unzuverlässige experimentelle Safari-Implementierung bewusst nicht aufgerufen.
+- Der Scanner prüft Prüfziffern und verlangt zwei aufeinanderfolgende gleiche Erkennungen, um Fehlablesungen zu minimieren. Zusätzlich werden das vollständige Strichmuster und die Ruhezonen geprüft.
+- Die Kamera stoppt beim Schließen, beim Verlassen der App und nach einem Treffer. Falls die Erkennung nicht gelingt, kann die EAN weiterhin manuell eingegeben werden.
+- **Keine Datenbankmigration, keine neue Portainer-Variable.** Der PWA-Cache wurde in v9.1.2 erneuert.
+
+**Aufnahme-Tipp:** Den gedruckten Strichcode möglichst waagrecht und groß ins Bild halten, etwas Abstand zur Schachtel lassen und für gleichmäßiges Licht sorgen.
 
 ## Neu in v9.1.1 – Spielansicht bewusst schreibgeschützt
 

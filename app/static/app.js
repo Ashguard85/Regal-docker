@@ -1,7 +1,8 @@
 import {LocalProvider,ServerProvider,OfflineProvider,createOfflineSnapshot,readOfflineSnapshot,clearOfflineSnapshot,loadServerConnection,saveServerConnection,wipeServerSecrets,validateBackup} from "./providers.js";
+import {decodeEanImageData,validEan} from "./ean-scanner.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.1",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.3",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -15,7 +16,7 @@ const DEFAULT_TAG_CATALOG={
 let tagCatalog=DEFAULT_TAG_CATALOG;
 let selectedTagFilters=new Set((()=>{try{const v=JSON.parse(localStorage.getItem("brettspielregal-tag-filters")||"[]");return Array.isArray(v)?v:[];}catch{return [];}})());
 
-let scannerStream=null,scanTimeout=null,scanInProgress=false;
+let scannerStream=null,scanTimeout=null,scanInProgress=false,scannerSession=0;
 const offlineReadOnly=()=>provider?.kind==="offline";
 function updateOfflineUi(){
   document.body.classList.toggle("offline-read-only",offlineReadOnly());
@@ -62,6 +63,7 @@ async function deleteOfflineShelf(){
   if(offlineReadOnly()){games=[];renderGames();showBanner("Offline-Daten gelöscht. Bitte mit dem Server verbinden.","error");}
 }
 function stopScanner(){
+  scannerSession++;
   scanInProgress=false;if(scanTimeout){clearTimeout(scanTimeout);scanTimeout=null;}
   for(const track of scannerStream?.getTracks?.()||[])track.stop();scannerStream=null;
   const video=$("barcodeVideo");if(video){video.pause();video.srcObject=null;}
@@ -69,30 +71,73 @@ function stopScanner(){
 function acceptScannedCode(code){
   const clean=String(code||"").replace(/\D/g,"");
   if(![8,12,13,14].includes(clean.length)){ $("barcodeStatus").textContent="EAN muss 8, 12, 13 oder 14 Ziffern haben.";return;}
+  // Prüfziffer schützt davor, dass Bildrauschen als Barcode übernommen wird.
+  if(!validEan(clean)){$("barcodeStatus").textContent="Die Prüfziffer der EAN stimmt nicht. Bitte Ziffern prüfen.";return;}
   stopScanner();$("barcodeDialog").close();$("quickAddText").value=clean;$("quickAddText").focus();
 }
 async function openBarcodeScanner(){
+  stopScanner();
+  const session=scannerSession;
   $("barcodeManual").value="";$("barcodeStatus").textContent="Prüfe Kamerazugriff …";
   $("barcodeDialog").showModal();
-  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){$("barcodeStatus").textContent="Kamera benötigt HTTPS und einen unterstützten Browser. Bitte EAN manuell eingeben.";return;}
-  if(!("BarcodeDetector" in window)){$("barcodeStatus").textContent="Dieser Browser unterstützt die automatische Barcode-Erkennung nicht. Bitte EAN manuell eingeben.";return;}
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
+    $("barcodeStatus").textContent="Kamera benötigt HTTPS und einen unterstützten Browser. Bitte EAN manuell eingeben.";return;
+  }
   try{
-    const supported=typeof BarcodeDetector.getSupportedFormats==="function"?await BarcodeDetector.getSupportedFormats():["ean_13","ean_8","upc_a"];
-    const formats=["ean_13","ean_8","upc_a","itf"].filter(f=>supported.includes(f));
-    if(!formats.length)throw new Error("Keine EAN-Formate verfügbar.");
-    const detector=new BarcodeDetector({formats});
-    scannerStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
-    if(!$("barcodeDialog").open){stopScanner();return;}
-    const video=$("barcodeVideo");video.srcObject=scannerStream;await video.play();scanInProgress=true;
-    $("barcodeStatus").textContent="EAN ruhig vor die Kamera halten …";
-    const scan=async()=>{
-      if(!scanInProgress||!$("barcodeDialog").open)return;
+    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+    if(session!==scannerSession||!$("barcodeDialog").open){stream.getTracks().forEach(t=>t.stop());return;}
+    scannerStream=stream;
+    const video=$("barcodeVideo");video.srcObject=stream;await video.play();
+    if(session!==scannerSession||!$("barcodeDialog").open){stopScanner();return;}
+    scanInProgress=true;
+    const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{willReadFrequently:true});
+    if(!ctx)throw new Error("Kamerabilder können nicht verarbeitet werden.");
+    let nativeDetector=null;
+    // Safari/iOS bietet BarcodeDetector teils an, erkennt aber keine Codes.
+    // Dort niemals darauf warten: ausschließlich den lokalen Decoder nutzen.
+    // Auf anderen Browsern bleibt der native Decoder eine optionale Ergänzung.
+    const isIOS=/iPad|iPhone|iPod/i.test(navigator.userAgent)
+      ||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+    if(!isIOS&&"BarcodeDetector" in window){
       try{
-        if(video.readyState>=2){const hits=await detector.detect(video);const match=hits.find(x=>/^[0-9]{8,14}$/.test(x.rawValue));if(match){acceptScannedCode(match.rawValue);return;}}
-      }catch{/* Browser may skip frames while camera is starting. */}
-      if(scanInProgress)scanTimeout=setTimeout(scan,350);
-    };scan();
-  }catch(err){stopScanner();$("barcodeStatus").textContent=`Kamera nicht verfügbar: ${err.message}. Bitte EAN manuell eingeben.`;}
+        const supported=typeof BarcodeDetector.getSupportedFormats==="function"
+          ?await BarcodeDetector.getSupportedFormats():["ean_13","ean_8","upc_a"];
+        const formats=["ean_13","ean_8","upc_a","itf"].filter(f=>supported.includes(f));
+        if(formats.length)nativeDetector=new BarcodeDetector({formats});
+      }catch{/* Kein Problem: der lokale Decoder ist unabhängig davon. */}
+    }
+    $("barcodeStatus").textContent="EAN-Balken waagrecht und gut beleuchtet in die Mitte halten. Erkennung läuft direkt auf dem iPhone …";
+    let lastValue="",repeats=0,frame=0;
+    const scan=async()=>{
+      if(session!==scannerSession||!scanInProgress||!$("barcodeDialog").open)return;
+      try{
+        if(video.readyState>=2&&video.videoWidth&&video.videoHeight){
+          const scale=Math.min(1,1280/video.videoWidth);
+          const w=Math.max(1,Math.round(video.videoWidth*scale));
+          const h=Math.max(1,Math.round(video.videoHeight*scale));
+          if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+          ctx.drawImage(video,0,0,w,h);
+          const local=decodeEanImageData(ctx.getImageData(0,0,w,h));
+          if(local&&validEan(local)){
+            repeats=local===lastValue?repeats+1:1;lastValue=local;
+            if(repeats>=2){acceptScannedCode(local);return;}
+          }else{repeats=0;lastValue="";}
+          // Weniger native Aufrufe: Safari kann bei detect(video) hängen.
+          if(nativeDetector&&++frame%5===0){
+            const hits=await nativeDetector.detect(video);
+            if(session!==scannerSession)return;
+            const match=hits.find(x=>validEan(String(x.rawValue||"")));
+            if(match){acceptScannedCode(match.rawValue);return;}
+          }
+        }
+      }catch{/* Einzelne Kameraframes können während Start/Fokus ungültig sein. */}
+      if(session===scannerSession&&scanInProgress)scanTimeout=setTimeout(scan,280);
+    };
+    scan();
+  }catch(err){
+    if(session!==scannerSession)return;
+    stopScanner();$("barcodeStatus").textContent=`Kamera/Erkennung nicht verfügbar: ${err.message}. Bitte EAN manuell eingeben.`;
+  }
 }
 async function downloadFullZip(){
   if(currentMode!=="server")return showMessage("Nur Server","Das vollständige ZIP enthält die Docker-Daten. Im lokalen Pages-Modus bitte den JSON-Export verwenden.");
@@ -617,6 +662,15 @@ function renderCoverPreview(){
   box.innerHTML=`<img src="${esc(url)}" alt="Cover-Vorschau" referrerpolicy="no-referrer"><span class="hint">Cover wird extern per HTTPS geladen und nicht in Backups eingebettet.</span>`;
   box.classList.remove("hidden");
 }
+function resetGameDialogToTop(){
+  // <form class="dialog-card"> ist der eigentliche Scroll-Container, nicht
+  // die dahinterliegende Sammlungsseite. Insbesondere Safari merkt sich sonst
+  // die alte Position eines zuvor geöffneten Bearbeitungsdialogs.
+  const dialog=$("gameDialog"), form=$("gameForm");
+  if(!dialog.open)return;
+  form.scrollTop=0;
+  dialog.scrollTop=0;
+}
 function openGame(game=null){
   if(offlineReadOnly()){showMessage("Offline-Regal","Bearbeiten ist erst nach Wiederverbindung möglich.");return;}
   clearGameForm();$("deleteGameButton").classList.toggle("hidden",!game);$("gameDialogTitle").textContent=game?"Spiel bearbeiten":"Spiel erfassen";
@@ -638,7 +692,20 @@ function openGame(game=null){
   const showResearch=!game&&currentMode==="server";
   if(researchRow&&researchToggle){researchRow.classList.toggle("hidden",!showResearch);
   if(showResearch){researchToggle.disabled=!researchAvailable();researchToggle.checked=researchAvailable();}}
-  $("gameDialog").showModal();setTimeout(()=>$("titleInput").focus(),50);
+  const dialog=$("gameDialog");
+  dialog.showModal();
+  if(game){
+    // Beim Bearbeiten NICHT den Titel fokussieren: Unter einem aufgeklappten
+    // KI-Bereich läge er weit unten; iOS/Safari scrollt dann automatisch dorthin.
+    // Stattdessen den Dialogtitel ohne Scrollen fokussieren und die Formular-
+    // Scrollposition nach dem Öffnen (auch im nächsten Frame) zurücksetzen.
+    try{$("gameDialogTitle").focus({preventScroll:true});}catch{}
+    resetGameDialogToTop();
+    requestAnimationFrame(()=>resetGameDialogToTop());
+  }else{
+    resetGameDialogToTop();
+    setTimeout(()=>$("titleInput").focus(),50);
+  }
 }
 function sizeText(bytes){return bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.ceil(bytes/1024))} KB`;}
 function renderEditAttachments(game=null){

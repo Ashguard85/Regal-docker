@@ -241,7 +241,7 @@ amazon.de"></textarea>
           <p>Für den Server-Modus empfiehlt sich ein separates, eng berechtigtes Cloudflare-Service-Token pro Gerät.</p>
         </div></details>
 
-        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.1.1</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
+        <details><summary>App-Info</summary><div class="details-body"><p>Version <span id="versionLabel">9.1.3</span></p><p id="buildTargetLabel" class="muted"></p></div></details>
       </section>
     </main>
 
@@ -265,14 +265,14 @@ amazon.de"></textarea>
     <p id="barcodeStatus" class="hint" role="status">Kamera wird gestartet …</p>
     <label>EAN manuell eingeben<input id="barcodeManual" inputmode="numeric" pattern="[0-9]{8,14}" maxlength="14" placeholder="8, 12, 13 oder 14 Ziffern"></label>
     <button type="button" id="barcodeUseManual" class="button primary">EAN übernehmen</button>
-    <p class="hint">Die Kamera benötigt HTTPS oder localhost und einen Browser mit BarcodeDetector. Ohne Unterstützung funktioniert die manuelle Eingabe.</p>
+    <p class="hint">Die Kamera benötigt HTTPS oder localhost. Die Erkennung von EAN-13, EAN-8 und UPC-A läuft lokal auf deinem Gerät – auch ohne Safaris experimentellen BarcodeDetector. Kamera ruhig halten und den Strichcode möglichst groß zeigen.</p>
   </div></dialog>
 
   <dialog id="gameDetailDialog" class="dialog"><div class="dialog-card detail-dialog-card"><div class="dialog-head"><div><p class="eyebrow">Dein Spiel</p><h2 id="detailTitle">Spiel</h2></div><button id="closeDetailDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div><div id="detailBody" class="detail-layout"></div><div class="dialog-actions detail-readonly-actions"><span class="spacer"></span><button id="detailEditButton" type="button" class="button primary">Bearbeiten</button></div><p id="detailAttachmentStatus" class="hint" role="status"></p></div></dialog>
 
   <dialog id="gameDialog" class="dialog">
     <form id="gameForm" method="dialog" class="dialog-card">
-      <div class="dialog-head"><div><p class="eyebrow">Brettspiel</p><h2 id="gameDialogTitle">Spiel erfassen</h2></div><button id="closeGameDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div>
+      <div class="dialog-head"><div><p class="eyebrow">Brettspiel</p><h2 id="gameDialogTitle" tabindex="-1">Spiel erfassen</h2></div><button id="closeGameDialog" type="button" class="icon-button" aria-label="Schließen">×</button></div>
       <input id="gameId" type="hidden">
       <details id="editAdvancedTools" class="edit-tools hidden">
         <summary>Recherche, Cover & KI verwalten</summary>

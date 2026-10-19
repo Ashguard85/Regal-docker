@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/9.1.1"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/9.1.3"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -117,7 +117,7 @@ def searxng_search(query, limit=None, *, language="de", safesearch=0, include_me
                 "safesearch": str(safesearch),
                 "categories": "general",
             },
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/9.1.1"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/9.1.3"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -769,7 +769,7 @@ def research_game(query, current_game=None):
     selected_report.sort(key=lambda item: int(item.get("post_fetch_score") if item.get("post_fetch_score") is not None else item.get("score") or -999), reverse=True)
     ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons", "fetch_error", "source_class", "source_label", "post_fetch_score", "post_fetch_reasons")} for row in candidates if row.get("url") not in successful_urls][:10]
     report = {
-        "pipeline": "v9.1.1",
+        "pipeline": "v9.1.3",
         "identity": ({
             "provider": "BoardGameGeek", "bgg_id": bgg_identity["data"]["bgg_id"],
             "title": bgg_identity["data"].get("name", ""), "matched_name": bgg_identity["matched_name"],
