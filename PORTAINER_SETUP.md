@@ -1,4 +1,16 @@
-# Brettspielregal v9.1.4 – Portainer
+## v9.1.5 – BGG als einzige Quelle für den Erstimport
+
+`BGG_API_TOKEN` unter Portainer → Stack → Environment Variables hinterlegen, falls noch nicht geschehen. Den Token **nicht** im GitHub-Pages-Frontend oder in Git speichern. `AI_IMPORT_ENABLED=true` und `AUTO_ENRICH_ENABLED=true` bleiben für den Hintergrundimport erforderlich.
+
+Unter **Setup → Automatische Recherche – Quellen & Prompt** ist „Erstimport nur über BGG“ standardmässig eingeschaltet. Beim ersten Import eines Titels ohne Link ruft der Worker dann ausschliesslich die BGG-XML-API2 auf. „Neu recherchieren“ sowie direkte HTTPS-Links verwenden die Vollrecherche; EAN-Codes benötigen weiterhin eine externe Auflösung.
+
+Ohne passenden BGG-Treffer bleibt das Spiel bestehen. Über **„Weitere Quellen durchsuchen“** in der Import-Warteschlange kann die vollständige Recherche ausdrücklich gestartet werden. Ohne BGG-Key wird kein automatischer Web-Fallback erzwungen.
+
+SQLite migriert nicht-destruktiv auf **Schema 12**, damit die Rechercheart pro Importauftrag erhalten bleibt. **Keine neue Pflichtvariable**, bestehende Daten- und Backup-Volumes unverändert weiterverwenden. Docker- und Pages-Dateien gemeinsam auf **v9.1.5** aktualisieren; die PWA anschliessend neu starten.
+
+---
+
+# Brettspielregal v9.1.5 – Portainer
 
 **Safari EAN-Scanner-Fix (ab v9.1.2):** Die iPhone-PWA liest EAN-13 und EAN-8 jetzt lokal per JavaScript aus Kameraframes; die experimentelle Safari-BarcodeDetector-API ist nicht mehr erforderlich. Für das Update beide Pakete (Docker und gegebenenfalls Pages) aktualisieren. **Keine neue Environment-Variable und keine Datenbankmigration.** Die persistenten `/app/data`-Volumes unverändert weiterverwenden. PWA einmal vollständig schließen und wieder öffnen, damit `brettspielregal-pwa-v9-1-3` aktiv ist.
 
