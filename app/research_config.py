@@ -132,6 +132,7 @@ SETTING_KEYS = {
     "low_trust_domains": "research.low_trust_domains",
     "system_prompt": "research.system_prompt",
     "research_prompt": "research.prompt",
+    "initial_bgg_only": "research.initial_bgg_only",
 }
 
 
@@ -170,6 +171,7 @@ def defaults():
         "low_trust_domains": list(DEFAULT_LOW_TRUST_DOMAINS),
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "research_prompt": DEFAULT_RESEARCH_PROMPT,
+        "initial_bgg_only": True,
     }
 
 
@@ -181,7 +183,9 @@ def get_settings():
         value = stored.get(key)
         if value in (None, ""):
             continue
-        if public.endswith("domains"):
+        if public == "initial_bgg_only":
+            data[public] = value.lower() in {"1", "true", "yes", "on"}
+        elif public.endswith("domains"):
             try:
                 parsed = json.loads(value)
             except Exception:
@@ -212,6 +216,10 @@ def save_settings(payload):
     db.set_app_setting(SETTING_KEYS["low_trust_domains"], json.dumps(low, ensure_ascii=False))
     db.set_app_setting(SETTING_KEYS["system_prompt"], system_prompt)
     db.set_app_setting(SETTING_KEYS["research_prompt"], research_prompt)
+    bgg_only = payload.get("initial_bgg_only", current["initial_bgg_only"])
+    if not isinstance(bgg_only, bool):
+        raise ValueError("Erstimport nur über BGG muss ein Wahrheitswert sein.")
+    db.set_app_setting(SETTING_KEYS["initial_bgg_only"], "true" if bgg_only else "false")
     return get_settings()
 
 

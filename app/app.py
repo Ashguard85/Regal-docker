@@ -58,6 +58,12 @@ def create_app(test_config=None):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+        # UI version consistency: don't let Safari/proxies retain an older
+        # index.html/config.js while the container serves newer JavaScript.
+        if request.method == "GET" and (response.mimetype == "text/html" or request.path.endswith((".js", ".css"))):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         origin = request.headers.get("Origin")
         allowed_origins, _invalid_origins = _configured_cors_origins()
         if origin and origin.rstrip("/") in set(allowed_origins):
@@ -67,6 +73,15 @@ def create_app(test_config=None):
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret, X-Brettspielregal-Restore-Token"
             response.headers["Access-Control-Max-Age"] = "600"
         return response
+
+    @app.route("/api/frontend-build", methods=["GET"])
+    def frontend_build():
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        result = jsonify(version="9.1.6", html_contains_bgg_toggle='id="initialBggOnlyInput"' in html,
+                         html_build="9.1.6-bgg-toggle" if 'content="9.1.6-bgg-toggle"' in html else "unbekannt",
+                         source="docker-image")
+        result.headers["Cache-Control"] = "no-store"
+        return result
 
     @app.route("/health", methods=["GET"])
     def health():
@@ -107,7 +122,7 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="9.1.4",
+            version="9.1.5",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
@@ -126,7 +141,7 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="9.1.4",
+            version="9.1.5",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
             rules_search_enabled=ai_enabled,
@@ -221,14 +236,19 @@ def create_app(test_config=None):
         if request.method == "OPTIONS": return ("", 204)
         if request.method == "GET": return jsonify(db.list_games())
         payload = request.get_json(silent=True) or {}
-        auto_enrich_requested = payload.pop("_auto_enrich", True) is not False
+        auto_enrich_flag = payload.pop("_auto_enrich", None)
+        # An explicit UI choice should start the import even when the optional
+        # Portainer-wide AUTO_ENRICH_NEW_GAMES flag is off. Plain API inserts
+        # without the explicit flag keep their previous default behaviour.
+        auto_enrich_requested = (auto_enrich_flag is True or
+            (auto_enrich_flag is not False and os.environ.get("AUTO_ENRICH_NEW_GAMES", "false").lower() in {"1","true","yes","on"}))
         payload["id"] = str(uuid.uuid4())
         try: game = db.normalize_game(payload)
         except ValueError as exc: return jsonify(error=str(exc)), 400
         db.save_game(game)
-        if auto_enrich_requested and os.environ.get("AUTO_ENRICH_NEW_GAMES", "false").lower() in {"1","true","yes","on"} and os.environ.get("AI_IMPORT_ENABLED", "false").lower() in {"1","true","yes","on"}:
+        if auto_enrich_requested and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"} and os.environ.get("AI_IMPORT_ENABLED", "false").lower() in {"1","true","yes","on"}:
             try:
-                db.enqueue_import_job(game["id"], game.get("ean") or game.get("title"))
+                db.enqueue_import_job(game["id"], game.get("ean") or game.get("title"), search_scope="initial")
             except ValueError:
                 pass
         return jsonify(game), 201
@@ -295,7 +315,7 @@ def create_app(test_config=None):
                 db.save_game(game)
                 reused = False
             query = digits if is_ean else line
-            job = db.enqueue_import_job(game["id"], query) if enrich_requested else None
+            job = db.enqueue_import_job(game["id"], query, search_scope="initial") if enrich_requested else None
             created.append({"game": game, "job": job, "reused": reused, "enrichment_queued": bool(job)})
         return jsonify(items=created, count=len(created)), 201
 
@@ -306,7 +326,7 @@ def create_app(test_config=None):
         if not game: return jsonify(error="Spiel wurde nicht gefunden."), 404
         payload = request.get_json(silent=True) or {}
         query = str(payload.get("query") or game.get("ean") or game.get("title") or "").strip()
-        try: job = db.enqueue_import_job(game_id, query, replace_active=bool(payload.get("replace_active")))
+        try: job = db.enqueue_import_job(game_id, query, replace_active=bool(payload.get("replace_active")), search_scope="full")
         except ValueError as exc: return jsonify(error=str(exc)), 400
         return jsonify(job), 201
 

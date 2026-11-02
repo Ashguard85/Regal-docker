@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/9.1.4"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/9.1.5"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -117,7 +117,7 @@ def searxng_search(query, limit=None, *, language="de", safesearch=0, include_me
                 "safesearch": str(safesearch),
                 "categories": "general",
             },
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/9.1.4"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/9.1.5"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:
@@ -611,11 +611,13 @@ def _compact_page_bundle(result, fallback, structured, text, warnings):
     }
 
 
-def research_game(query, current_game=None):
+def research_game(query, current_game=None, *, mode="full"):
     query = str(query or "").strip()
     if not query:
         raise ResearchSearchError("Suchbegriff fehlt.")
     current_game = current_game or {}
+    if mode not in {"full", "bgg_only"}:
+        raise ValueError("Unbekannte Rechercheart.")
     settings = get_settings()
     max_pages = _int_env("AUTO_FETCH_PAGES", 3, 1, 4)
     max_total_chars = _int_env("AUTO_RESEARCH_MAX_CHARS", 24000, 8000, 50000)
@@ -629,6 +631,40 @@ def research_game(query, current_game=None):
     except BGGError as exc:
         bgg_error = str(exc)
 
+    if mode == "bgg_only":
+        if not bgg_identity or int(bgg_identity.get("score") or 0) < 85:
+            hint = ("BGG-Zuordnung ist nicht eindeutig." if bgg_identity else
+                    "BGG hat kein passendes Spiel geliefert.")
+            if bgg_error:
+                hint += " " + bgg_error
+            raise ResearchSearchError(hint + " Öffne das Spiel unter Bearbeiten und wähle „Neu recherchieren“, um weitere Quellen zu verwenden.")
+        data = bgg_identity["data"]
+        bundle = {
+            "kind": "bgg_structured", "url": data["url"], "trust": "reference",
+            "identity_score": bgg_identity["score"], "matched_name": bgg_identity["matched_name"],
+            "data": data,
+        }
+        identity = {"provider": "BoardGameGeek", "bgg_id": data["bgg_id"],
+                    "title": data.get("name", ""), "matched_name": bgg_identity["matched_name"],
+                    "score": bgg_identity["score"], "url": data["url"]}
+        report = {"pipeline": "v9.1.5", "mode": "bgg_only", "identity": identity,
+                  "bgg_error": "", "candidate_count": 1, "pages_fetched": 0,
+                  "pages_used": 0, "fetch_failures": 0, "search_diagnostics": [],
+                  "selected": [{"kind": "bgg_structured", "title": data.get("name") or "BGG",
+                                "url": data["url"], "source_label": "BGG API – einzige Quelle",
+                                "score": bgg_identity["score"], "source_class": "structured_reference"}],
+                  "ignored": []}
+        return {"query": query, "sources": [data["url"]],
+                "evidence": json.dumps({"pipeline":"v9.1.5-bgg-only", "query":query,
+                         "important":"Nur strukturierte BGG-API-Daten. Keine SearXNG-/Webseitenquellen; fehlende Werte nicht erfinden.",
+                         "sources":[bundle]}, ensure_ascii=False, separators=(",", ":"))[:max_total_chars],
+                "results": [], "pages_fetched":0, "pages_used":0,
+                "research":report, "_field_source_bundles":[bundle]}
+
+    from .research_policy import is_explicit_link
+    direct_link = str(current_game.get("source_url") or "").strip()
+    if not is_explicit_link(direct_link) and is_explicit_link(query):
+        direct_link = query
     try:
         try:
             search_result = search(query, current_game, return_diagnostics=True)
@@ -645,7 +681,7 @@ def research_game(query, current_game=None):
     except ResearchSearchError as exc:
         # If BGG already identified the game, continue with the structured
         # evidence.  Otherwise this remains a genuine research failure.
-        if bgg_identity:
+        if bgg_identity or is_explicit_link(direct_link):
             candidates, search_diagnostics = [], [{"error": str(exc)}]
         else:
             raise
@@ -653,6 +689,15 @@ def research_game(query, current_game=None):
     selected, ignored = _select_candidates(
         candidates, max_pages, allow_bgg_html=not bool(bgg_identity)
     )
+    # User-supplied HTTPS source links are fetched first, even when SearXNG
+    # scored another site more highly. They are validated by extract_page.
+    if is_explicit_link(direct_link) and not any(row.get("url") == direct_link for row in selected):
+        direct_candidate = {"url":direct_link, "title":"Direkt angegebener Link", "trust":source_trust(direct_link, settings), "score":130, "reasons":["vom Benutzer angegeben"]}
+        selected.insert(0, direct_candidate)
+        if not any(row.get("url") == direct_link for row in candidates):
+            candidates.insert(0, direct_candidate)
+    elif is_explicit_link(direct_link):
+        selected.sort(key=lambda row: row.get("url") != direct_link)
     bundles, sources, extracted_titles = [], [], []
     fetch_failures = []
     fetched_pages = []
@@ -677,6 +722,11 @@ def research_game(query, current_game=None):
         if title and title not in extracted_titles:
             extracted_titles.append(title)
         classified = classify_fetched_page(result, fallback, structured, text, current_game, settings)
+        if result.get("url") == direct_link:
+            # Explicit user page wins ranking without pretending to be an
+            # official publisher or to corroborate its data.
+            classified["post_fetch_score"] = int(classified.get("post_fetch_score") or 0) + 180
+            classified["post_fetch_reasons"] = [*(classified.get("post_fetch_reasons") or []), "Direkt angegebener Link"]
         result.update({
             "source_class": classified.get("source_class"),
             "source_label": classified.get("source_label"),
@@ -769,7 +819,7 @@ def research_game(query, current_game=None):
     selected_report.sort(key=lambda item: int(item.get("post_fetch_score") if item.get("post_fetch_score") is not None else item.get("score") or -999), reverse=True)
     ignored_report = [{k: row.get(k) for k in ("title", "url", "trust", "score", "reasons", "fetch_error", "source_class", "source_label", "post_fetch_score", "post_fetch_reasons")} for row in candidates if row.get("url") not in successful_urls][:10]
     report = {
-        "pipeline": "v9.1.4",
+        "pipeline": "v9.1.5", "mode": "full",
         "identity": ({
             "provider": "BoardGameGeek", "bgg_id": bgg_identity["data"]["bgg_id"],
             "title": bgg_identity["data"].get("name", ""), "matched_name": bgg_identity["matched_name"],

@@ -13,6 +13,8 @@ from .ai_import import import_from_research
 from .ai_provider import AIProviderError
 from .research_search import ResearchSearchError, research_game
 from .evidence import build_field_evidence
+from .research_policy import choose_mode
+from .research_config import get_settings
 
 RUNNING = True
 CURRENT_MESSAGE = "Worker gestartet"
@@ -84,9 +86,10 @@ def process_job(job):
         db.update_import_job(job_id, status="failed", progress="Spiel nicht mehr vorhanden", error="Spiel wurde gelöscht.", finished=True)
         return
 
-    _set_message(f"Suche Quellen: {job['query'][:120]}")
-    db.update_import_job(job_id, progress="Suche passende Quellen im Internet …")
-    research = research_game(job["query"], game)
+    mode = choose_mode(job, game, get_settings())
+    _set_message(f"Recherche {mode}: {job['query'][:120]}")
+    db.update_import_job(job_id, progress="BGG-API wird abgefragt …" if mode == "bgg_only" else "Suche passende Quellen im Internet …")
+    research = research_game(job["query"], game, mode="bgg_only") if mode == "bgg_only" else research_game(job["query"], game)
     if _job_cancelled(job_id):
         return
 

@@ -20,7 +20,7 @@ def setup_db(folder):
 def test_v9_migration_bgg_and_backup_roundtrip():
     with tempfile.TemporaryDirectory() as folder:
         db, _ = setup_db(folder)
-        assert db.SCHEMA_VERSION == 11
+        assert db.SCHEMA_VERSION == 12
         game = db.normalize_game({'id': 'g1', 'title': 'Scythe', 'bgg_id': 169786, 'storage_location': 'Wohnzimmer / Tablar 1'})
         db.save_game(game)
         assert db.get_game('g1')['bgg_id'] == 169786

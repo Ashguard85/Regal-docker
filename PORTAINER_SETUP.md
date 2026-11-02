@@ -1,4 +1,46 @@
-## v9.1.5 – BGG als einzige Quelle für den Erstimport
+# v9.1.6 – Docker-HTML und BGG-Checkbox zuverlässig ausliefern
+
+Diese Version korrigiert die Sichtbarkeit von **„Erstimport nur über BGG“**. Kein Datenbank- oder Konfigurationsreset erforderlich.
+
+## Wichtig: Portainer baut aus Git, nicht aus dem heruntergeladenen ZIP
+
+Der mitgelieferte Stack enthält:
+
+```yaml
+x-app-build: &app-build
+  context: https://github.com/Ashguard85/Regal-docker.git#main
+```
+
+Deshalb reicht es **nicht**, die neue YAML in Portainer einzufügen. Um den aktuellen Docker-Code zu installieren:
+
+1. Vorher den laufenden Bestand sichern. **Daten-/Backup-Volumes nicht löschen.**
+2. Den Inhalt von `brettspielregal-docker-v9.1.6.zip` **in das Root-Verzeichnis des Git-Repositories `Ashguard85/Regal-docker`** übertragen; Dateien ersetzen. Die Archivstruktur enthält bereits `Dockerfile`, `frontend/`, `app/`, `build_frontend.py` und `requirements.txt` am Root.
+3. Änderungen auf dem Branch `main` committen und pushen.
+4. Den Portainer-Stack mit **Pull/Rebuild (neu bauen, nicht nur Container neu starten)** aktualisieren. App und Worker müssen mit demselben neuen Image laufen. Die Stack-YAML im ZIP kann dabei verwendet werden; sie ist hauptsächlich die bestehende Konfiguration mit neuem Dateinamen.
+5. Die iPhone-PWA einmal vollständig beenden und neu öffnen.
+
+Zur Überprüfung direkt im Browser öffnen:
+
+`https://DEINE-DOMAIN/api/frontend-build`
+
+Erwartete Werte:
+
+```json
+{
+  "version": "9.1.6",
+  "source": "docker-image",
+  "html_build": "9.1.6-bgg-toggle",
+  "html_contains_bgg_toggle": true
+}
+```
+
+Außerdem steht unter **Setup → App-Info** die HTML-Oberfläche `9.1.6-bgg-toggle`. Die Checkbox ist unter **Setup → Automatische Recherche – Quellen & Prompt**, unmittelbar oberhalb von **Primärquellen**.
+
+Wenn `/api/frontend-build` nicht existiert oder eine ältere Version meldet, läuft noch ein altes Docker-Image oder ein anderer Server. Es ist dann kein Safari-Problem; den Git-Build/Portainer-Stack prüfen.
+
+---
+
+## v9.1.6 – BGG als einzige Quelle für den Erstimport
 
 `BGG_API_TOKEN` unter Portainer → Stack → Environment Variables hinterlegen, falls noch nicht geschehen. Den Token **nicht** im GitHub-Pages-Frontend oder in Git speichern. `AI_IMPORT_ENABLED=true` und `AUTO_ENRICH_ENABLED=true` bleiben für den Hintergrundimport erforderlich.
 
@@ -6,11 +48,11 @@ Unter **Setup → Automatische Recherche – Quellen & Prompt** ist „Erstimpor
 
 Ohne passenden BGG-Treffer bleibt das Spiel bestehen. Über **„Weitere Quellen durchsuchen“** in der Import-Warteschlange kann die vollständige Recherche ausdrücklich gestartet werden. Ohne BGG-Key wird kein automatischer Web-Fallback erzwungen.
 
-SQLite migriert nicht-destruktiv auf **Schema 12**, damit die Rechercheart pro Importauftrag erhalten bleibt. **Keine neue Pflichtvariable**, bestehende Daten- und Backup-Volumes unverändert weiterverwenden. Docker- und Pages-Dateien gemeinsam auf **v9.1.5** aktualisieren; die PWA anschliessend neu starten.
+SQLite migriert nicht-destruktiv auf **Schema 12**, damit die Rechercheart pro Importauftrag erhalten bleibt. **Keine neue Pflichtvariable**, bestehende Daten- und Backup-Volumes unverändert weiterverwenden. Docker- und Pages-Dateien gemeinsam auf **v9.1.6** aktualisieren; die PWA anschliessend neu starten.
 
 ---
 
-# Brettspielregal v9.1.5 – Portainer
+# Brettspielregal v9.1.6 – Portainer
 
 **Safari EAN-Scanner-Fix (ab v9.1.2):** Die iPhone-PWA liest EAN-13 und EAN-8 jetzt lokal per JavaScript aus Kameraframes; die experimentelle Safari-BarcodeDetector-API ist nicht mehr erforderlich. Für das Update beide Pakete (Docker und gegebenenfalls Pages) aktualisieren. **Keine neue Environment-Variable und keine Datenbankmigration.** Die persistenten `/app/data`-Volumes unverändert weiterverwenden. PWA einmal vollständig schließen und wieder öffnen, damit `brettspielregal-pwa-v9-1-3` aktiv ist.
 

@@ -2,7 +2,7 @@ import {LocalProvider,ServerProvider,OfflineProvider,createOfflineSnapshot,readO
 import {decodeEanImageDataDetailed,validEan} from "./ean-scanner.js";
 
 const $=id=>document.getElementById(id);
-const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.4",defaultApiUrl:"",allowLocalMode:true};
+const config=window.APP_CONFIG||{buildTarget:"shared",version:"9.1.6",defaultApiUrl:"",allowLocalMode:true};
 let provider=null, currentMode="local", games=[], serverConfig=null, aiEnabled=false, rulesSearchEnabled=false, aiProvider="none", aiModel="", aiVisionModel="", rulesSearchProvider="none", autoEnrichEnabled=false, autoSearchProvider="none";
 let importJobs=[], workerState={status:"offline",message:""}, queueTimer=null, queueFingerprint="", forceReleaseAfterSeconds=600, forceReleaseCancelGraceSeconds=15, diagnosticsChecked=false;
 let collectionView=localStorage.getItem("brettspielregal-collection-view")==="shelf"?"shelf":"list", activeDetailGameId="", pendingFiles=[], pendingMagicImport=null;
@@ -499,7 +499,10 @@ function renderQueue(){
     const canForce=running&&(staleFor>=forceReleaseAfterSeconds||(job.cancel_requested&&cancelFor>=forceReleaseCancelGraceSeconds));
     let actions="";
     if(review)actions=`<div class="queue-actions"><button class="button queue-action" type="button" data-review-game="${esc(job.game_id)}">${pending?`${pending} Vorschläge prüfen`:"Prüfen"}</button></div>`;
-    else if(failed)actions=`<div class="queue-actions"><button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut</button></div>`;
+    else if(failed){
+      const more=job.search_scope==="initial"?`<button class="button queue-action primary" type="button" data-full-research="${esc(job.game_id)}">Weitere Quellen durchsuchen</button>`:"";
+      actions=`<div class="queue-actions">${more}<button class="button queue-action" type="button" data-retry-job="${esc(job.id)}">↻ Erneut versuchen</button></div>`;
+    }
     else if(running){
       const cancelButton=job.cancel_requested?`<span class="queue-cancel-note">Abbruch angefordert …</span>`:`<button class="button queue-action" type="button" data-cancel-running-job="${esc(job.id)}">Abbrechen</button>`;
       const forceButton=canForce?`<button class="button queue-action danger" type="button" data-force-release-job="${esc(job.id)}">Hängenden Auftrag freigeben</button>`:"";
@@ -508,6 +511,15 @@ function renderQueue(){
     return `<div class="queue-row ${review?"review-row":""}"><div class="queue-status-dot ${m.kind}" aria-hidden="true"></div><div class="queue-copy"><strong>${esc(job.game_title||job.query)}</strong><small>${esc(job.progress||m.label)}${job.game_storage_location?` · 📍 ${esc(job.game_storage_location)}`:""}${job.error?` · ${esc(job.error)}`:""}</small></div><span class="queue-state ${m.kind}">${esc(m.label)}</span>${actions}</div>`;
   }).join("") || `<div class="queue-empty">${esc(workerState.message||"Worker bereit.")}</div>`;
   $("queueList").querySelectorAll("[data-retry-job]").forEach(b=>b.addEventListener("click",async()=>{b.disabled=true;try{await provider.retryImportJob(b.dataset.retryJob);await refreshQueue(true);}catch(err){showMessage("Erneuter Versuch fehlgeschlagen",err.message);}finally{b.disabled=false;}}));
+  $("queueList").querySelectorAll("[data-full-research]").forEach(b=>b.addEventListener("click",async()=>{
+    b.disabled=true;
+    try{
+      const game=games.find(g=>g.id===b.dataset.fullResearch);
+      if(!game)throw new Error("Spiel wurde nicht gefunden.");
+      await provider.enqueueEnrichment(game.id,game.title||game.ean,false);
+      await refreshQueue(true);
+    }catch(err){showMessage("Erweiterte Recherche fehlgeschlagen",err.message);}finally{b.disabled=false;}
+  }));
   $("queueList").querySelectorAll("[data-cancel-running-job]").forEach(b=>b.addEventListener("click",async()=>{
     if(!confirm("Laufenden Hintergrundauftrag abbrechen? Das Spiel selbst bleibt in deiner Sammlung."))return;
     b.disabled=true;try{await provider.requestCancelImportJob(b.dataset.cancelRunningJob);await refreshQueue(true);}catch(err){showMessage("Abbrechen fehlgeschlagen",err.message);}finally{b.disabled=false;}
@@ -874,7 +886,7 @@ function renderEditReview(game){
   $("detailReEnrichButton").onclick=canReEnrich?async()=>{
     if(!confirm("Recherche neu starten? Nicht gespeicherte Änderungen im Bearbeitungsformular gehen verloren."))return;
     const b=$("detailReEnrichButton");setBusy(b,true,"Reihe ein …");
-    try{await provider.enqueueEnrichment(game.id,game.ean||game.title,false);await refreshQueue();$("gameDialog").close();showView("import");}
+    try{await provider.enqueueEnrichment(game.id,game.title||game.ean,false);await refreshQueue();$("gameDialog").close();showView("import");}
     catch(err){reportError(err);}finally{setBusy(b,false);}
   }:null;
 }
@@ -1136,11 +1148,33 @@ async function runSystemDiagnostics({showDialog=false}={}){
   }finally{setBusy(b,false);}
 }
 
+function ensureInitialBggToggle(){
+  // Falls bei einem Deployment die index.html älter ist als app.js, wird die
+  // Einstellung trotzdem angezeigt. Keinesfalls vorhandene Formulardaten löschen.
+  if($("initialBggOnlyInput"))return;
+  const form=$("researchSettingsForm");
+  if(!form)return;
+  const label=document.createElement("label");
+  label.className="full research-mode-toggle";
+  label.dataset.feature="bgg-first-import";
+  const heading=document.createElement("span");
+  const checkbox=document.createElement("input");
+  checkbox.type="checkbox"; checkbox.id="initialBggOnlyInput";checkbox.checked=true;
+  const title=document.createElement("strong");title.textContent="Erstimport nur über BGG";
+  heading.append(checkbox,title);
+  const note=document.createElement("span");note.className="hint";
+  note.textContent="Neue Spiele mit Titel zunächst nur über die BGG API recherchieren. Neu recherchieren nutzt wieder alle Quellen. Links und EAN sind Ausnahmen.";
+  label.append(heading,note);
+  form.prepend(label);
+}
+
 async function loadSetup(){
+  ensureInitialBggToggle();
   updateOfflineStatus().catch(()=>{});loadApprovalSettings().catch(()=>{});
   serverConfig=await loadServerConnection();$("backendUrl").value=serverConfig.url||config.defaultApiUrl||"";$("cfClientId").value=serverConfig.clientId||"";$("cfClientSecret").value="";$("cfClientSecret").placeholder=serverConfig.clientSecret?"Gespeichert – zum Ersetzen neu eingeben":"Neu setzen oder leer lassen";
   if($("diagnosticOrigin"))$("diagnosticOrigin").textContent=`Frontend: ${window.location.origin}`;
   $("versionLabel").textContent=config.version;$("buildTargetLabel").textContent=isDocker()?"Docker Fullstack Build":"GitHub Pages PWA Build";
+  if($("uiBuildLabel"))$("uiBuildLabel").textContent=document.querySelector('meta[name="brettspielregal-ui-build"]')?.content||"Älteres HTML – bitte Frontend aktualisieren";
   $("serverConfigForm").classList.toggle("hidden",isDocker());
   $("researchSettingsDetails").classList.toggle("hidden",currentMode!=="server");
   if(currentMode==="server"){
@@ -1151,6 +1185,7 @@ async function loadSetup(){
       $("lowTrustSourcesInput").value=(r.low_trust_domains||[]).join("\n");
       $("researchSystemPromptInput").value=r.system_prompt||"";
       $("researchPromptInput").value=r.research_prompt||"";
+      $("initialBggOnlyInput").checked=r.initial_bgg_only!==false;
       $("researchSettingsStatus").textContent="";
     }catch(err){$("researchSettingsStatus").textContent=err.message;}
     if(!diagnosticsChecked)runSystemDiagnostics().catch(()=>{});
@@ -1165,6 +1200,7 @@ async function saveResearchSettings(event){
       low_trust_domains:$("lowTrustSourcesInput").value.split(/\n+/).map(x=>x.trim()).filter(Boolean),
       system_prompt:$("researchSystemPromptInput").value,
       research_prompt:$("researchPromptInput").value,
+      initial_bgg_only:$("initialBggOnlyInput").checked,
     });
     $("primarySourcesInput").value=(data.primary_domains||[]).join("\n");$("referenceSourcesInput").value=(data.reference_domains||[]).join("\n");$("lowTrustSourcesInput").value=(data.low_trust_domains||[]).join("\n");
     $("researchSettingsStatus").textContent="Gespeichert. Neue Worker-Aufträge verwenden diese Einstellungen.";
@@ -1263,9 +1299,10 @@ function bindEvents(){
 }
 
 async function init(){
+  ensureInitialBggToggle();
   bindEvents();for(const id of FILTER_IDS){if(id!=="filterLocation")$(id).value=advancedFilters[id]||"";}updateViewButtons();renderTagPicker();$("versionLabel").textContent=config.version;
   pendingMagicImport=readMagicImport();
-  if("serviceWorker" in navigator){navigator.serviceWorker.register("./service-worker.js").catch(()=>{});}
+  if("serviceWorker" in navigator){navigator.serviceWorker.register("./service-worker.js",{updateViaCache:"none"}).then(reg=>reg.update().catch(()=>{})).catch(()=>{});}
   if(!isDocker()&&config.allowLocalMode&&!selectedMode()){
     currentMode="local";provider=new LocalProvider();$("modeBadge").textContent="Lokal";await loadSetup();$("firstRunDialog").showModal();return;
   }

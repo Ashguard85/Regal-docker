@@ -1,4 +1,13 @@
-# Brettspielregal – Docker Fullstack v9.1.5
+# Brettspielregal – Docker Fullstack v9.1.6
+
+## Neu in v9.1.6 – BGG-Checkbox sichtbar, Deployment und Cache überprüfbar
+
+- Die **BGG-Erstimport-Checkbox** ist im Docker-HTML und im Pages-HTML direkt **oberhalb von „Primärquellen“** gut sichtbar hervorgehoben.
+- Falls das HTML und JavaScript aus unterschiedlichen Buildständen stammen, ergänzt die Oberfläche den fehlenden Schalter selbst, ohne Formulardaten zu verlieren.
+- Docker liefert HTML, CSS und JavaScript mit `Cache-Control: no-store` aus; die PWA hat den neuen Cache-Schlüssel `brettspielregal-pwa-v9-1-6`.
+- Unter **Setup → App-Info** steht die HTML-Buildkennung `9.1.6-bgg-toggle`. Die zusätzliche Diagnose-Adresse **`/api/frontend-build`** zeigt bei einem korrekt gebauten Docker-Image `html_contains_bgg_toggle: true`.
+- **Portainer Git-Stack beachten:** Der mitgelieferte Stack baut von `https://github.com/Ashguard85/Regal-docker.git#main`. Die Dateien aus dem Docker-ZIP müssen zuerst im dortigen `main`-Branch eingecheckt werden. Ein ZIP-Download oder ein Stack-YAML-Update allein ersetzt die Quelltexte nicht.
+- Keine neue Datenbankmigration, keine neue Pflichtvariable und kein Löschen von Safari-Website-Daten nötig.
 
 ## Neu in v9.1.5 – Erstimport nur BGG (abschaltbar)
 
@@ -253,7 +262,7 @@ ollama pull gemma3:12b
 
 ## Portainer
 
-Siehe `PORTAINER_SETUP.md` und `portainer-stack-v9.1.5.yml`.
+Siehe `PORTAINER_SETUP.md` und `portainer-stack-v9.1.6.yml`.
 
 Wichtige technische Variablen bleiben in Portainer:
 

@@ -30,5 +30,5 @@ def test_iphone_still_capture_has_no_external_upload_and_can_restart():
 
 def test_cache_contains_scanner_and_released_version():
     sw = (ROOT / 'frontend/service-worker.js').read_text()
-    assert 'brettspielregal-pwa-v9-1-4' in sw
+    assert 'brettspielregal-pwa-v9-1-6' in sw
     assert './ean-scanner.js' in sw

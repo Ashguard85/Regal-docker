@@ -702,3 +702,22 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 .barcode-scan-actions .button{flex:1 1 140px}
 .barcode-guidance{text-align:center;font-size:.74rem;color:var(--muted);margin:-2px 0 6px}
 #barcodeStatus{min-height:3em;line-height:1.4;overflow-wrap:anywhere}
+
+/* v9.1.6 */
+.research-mode-toggle{display:grid;gap:7px;padding:12px;border-radius:12px;background:var(--surface-soft,#f5f7f5);border:1px solid var(--border,#dfe5de)}
+.research-mode-toggle>span:first-child{display:flex;align-items:center;gap:8px}.research-mode-toggle input[type="checkbox"]{width:20px;height:20px;flex-shrink:0}
+
+/* v9.1.6: gut sichtbare Quellenwahl im Recherche-Abschnitt */
+#researchSettingsForm > .research-mode-toggle {
+  display: grid !important;
+  width: 100%;
+  gap: 8px;
+  padding: 15px;
+  background: #eef6f1;
+  border: 2px solid #bad7c5;
+  border-radius: 15px;
+}
+#researchSettingsForm > .research-mode-toggle > span:first-child {display:flex;align-items:center;gap:10px}
+#researchSettingsForm > .research-mode-toggle input[type="checkbox"] {appearance:auto; -webkit-appearance:checkbox; width:22px;height:22px; flex-shrink:0;accent-color:#216044}
+#researchSettingsForm > .research-mode-toggle strong {font-size:.98rem;color:#174e35}
+#researchSettingsForm > .research-mode-toggle .hint {font-size:.8rem;line-height:1.5}

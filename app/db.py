@@ -7,7 +7,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 BACKUP_VERSION = 5
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3, 4, 5}
 
@@ -211,6 +211,12 @@ def init_db():
                 conn.execute("ALTER TABLE games ADD COLUMN bgg_id INTEGER")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_games_bgg_id ON games(bgg_id)")
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (11, utcnow()))
+
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 12 not in applied:
+            if "search_scope" not in _columns(conn, "import_jobs"):
+                conn.execute("ALTER TABLE import_jobs ADD COLUMN search_scope TEXT NOT NULL DEFAULT 'full'")
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (12, utcnow()))
 
 
 def get_app_settings(keys=None):
@@ -431,8 +437,10 @@ def find_game_by_title(title):
         return row_to_game(conn.execute("SELECT * FROM games WHERE title=? COLLATE NOCASE LIMIT 1", (title,)).fetchone())
 
 
-def enqueue_import_job(game_id, query, *, replace_active=False):
+def enqueue_import_job(game_id, query, *, replace_active=False, search_scope="full"):
     query = str(query or "").strip()[:500]
+    if search_scope not in {"initial", "full"}:
+        raise ValueError("Ungültige Rechercheart.")
     if not query:
         raise ValueError("Für die automatische Ergänzung fehlt Titel oder EAN.")
     now = utcnow()
@@ -446,8 +454,8 @@ def enqueue_import_job(game_id, query, *, replace_active=False):
             conn.execute("UPDATE import_jobs SET status='cancelled', progress='Durch neuen Auftrag ersetzt', cancel_requested=1, cancel_requested_at=?, updated_at=?, finished_at=? WHERE id=?", (now, now, now, active['id']))
         import uuid
         job_id = str(uuid.uuid4())
-        conn.execute("INSERT INTO import_jobs(id,game_id,query,status,progress,attempts,error,warnings_json,sources_json,created_at,updated_at,started_at,finished_at,cancel_requested,cancel_requested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                     (job_id, game_id, query, 'queued', 'Wartet auf automatische Ergänzung', 0, '', '[]', '[]', now, now, '', '', 0, ''))
+        conn.execute("INSERT INTO import_jobs(id,game_id,query,status,progress,attempts,error,warnings_json,sources_json,created_at,updated_at,started_at,finished_at,cancel_requested,cancel_requested_at,search_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (job_id, game_id, query, 'queued', 'Wartet auf automatische Ergänzung', 0, '', '[]', '[]', now, now, '', '', 0, '', search_scope))
         row = conn.execute("SELECT * FROM import_jobs WHERE id=?", (job_id,)).fetchone()
         return _job_row(row)
 

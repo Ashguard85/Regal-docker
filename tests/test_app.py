@@ -30,7 +30,7 @@ def test_health_config_and_crud():
         assert system.json["cors"]["allowed"] is True
         assert system.json["search"]["status"] == "disabled"
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "9.1.4"
+        assert cfg["version"] == "9.1.6"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -111,3 +111,69 @@ def test_review_job_can_be_approved_via_api():
         assert approved.json['applied'] == ['publisher']
         assert c.get(f"/api/games/{created['id']}").json['publisher'] == 'Brändi'
         assert db.get_import_job(job['id'])['status'] == 'verified'
+
+
+def test_v915_bgg_first_setting_and_job_scopes():
+    with tempfile.TemporaryDirectory() as tmp:
+        app = load_app(tmp)
+        import app.db as db
+        c = app.test_client()
+        initial = c.get('/api/research-settings')
+        assert initial.status_code == 200
+        assert initial.json['initial_bgg_only'] is True
+        changed = c.put('/api/research-settings', json={'initial_bgg_only': False})
+        assert changed.status_code == 200
+        assert changed.json['initial_bgg_only'] is False
+        restored = c.put('/api/research-settings', json={'initial_bgg_only': True})
+        assert restored.status_code == 200
+
+        os.environ['AI_IMPORT_ENABLED'] = 'true'
+        os.environ['AUTO_ENRICH_ENABLED'] = 'true'
+        quick = c.post('/api/import-queue/quick', json={'text':'Scythe'})
+        assert quick.status_code == 201
+        game = quick.json['items'][0]['game']
+        first = quick.json['items'][0]['job']
+        assert first['search_scope'] == 'initial'
+        refreshed = c.post(f"/api/import-queue/games/{game['id']}", json={'query': 'Scythe', 'replace_active': True})
+        assert refreshed.status_code == 201
+        assert refreshed.json['search_scope'] == 'full'
+        assert db.get_game(game['id'])['title'] == 'Scythe'
+
+
+def test_v915_explicit_new_game_enrich_respects_user_toggle():
+    with tempfile.TemporaryDirectory() as tmp:
+        app = load_app(tmp)
+        os.environ['AI_IMPORT_ENABLED'] = 'true'
+        os.environ['AUTO_ENRICH_ENABLED'] = 'true'
+        os.environ['AUTO_ENRICH_NEW_GAMES'] = 'false'
+        c = app.test_client()
+        created = c.post('/api/games', json={'title':'Scythe','_auto_enrich':True})
+        assert created.status_code == 201
+        import app.db as db
+        jobs = [j for j in db.list_import_jobs() if j['game_id'] == created.json['id']]
+        assert len(jobs) == 1
+        assert jobs[0]['search_scope'] == 'initial'
+        quiet = c.post('/api/games', json={'title':'Azul','_auto_enrich':False})
+        assert quiet.status_code == 201
+        assert not any(j['game_id'] == quiet.json['id'] for j in db.list_import_jobs())
+
+
+def test_v916_frontend_files_and_build_diagnostics_are_consistent():
+    with tempfile.TemporaryDirectory() as tmp:
+        app = load_app(tmp)
+        client = app.test_client()
+        details = client.get('/api/frontend-build')
+        assert details.status_code == 200
+        assert details.json['version'] == '9.1.6'
+        assert details.json['html_contains_bgg_toggle'] is True
+        assert details.json['html_build'] == '9.1.6-bgg-toggle'
+        assert details.headers['Cache-Control'] == 'no-store'
+        html = client.get('/')
+        assert html.status_code == 200
+        assert b'id="initialBggOnlyInput"' in html.data
+        assert b'content="9.1.6-bgg-toggle"' in html.data
+        assert 'no-store' in html.headers['Cache-Control']
+        js = client.get('/app.js')
+        assert js.status_code == 200
+        assert b'ensureInitialBggToggle' in js.data
+        assert 'no-store' in js.headers['Cache-Control']
