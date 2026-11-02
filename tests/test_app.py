@@ -30,7 +30,7 @@ def test_health_config_and_crud():
         assert system.json["cors"]["allowed"] is True
         assert system.json["search"]["status"] == "disabled"
         cfg = c.get("/api/config").json
-        assert cfg["version"] == "9.1.6"
+        assert cfg["version"] == "10.0.0"
         assert cfg["ai_provider"] == "none"
         assert cfg["ai_import_enabled"] is False
         created = c.post("/api/games", json={
@@ -164,14 +164,14 @@ def test_v916_frontend_files_and_build_diagnostics_are_consistent():
         client = app.test_client()
         details = client.get('/api/frontend-build')
         assert details.status_code == 200
-        assert details.json['version'] == '9.1.6'
+        assert details.json['version'] == '10.0.0'
         assert details.json['html_contains_bgg_toggle'] is True
-        assert details.json['html_build'] == '9.1.6-bgg-toggle'
+        assert details.json['html_build'] == '10.0.0-bgg-toggle'
         assert details.headers['Cache-Control'] == 'no-store'
         html = client.get('/')
         assert html.status_code == 200
         assert b'id="initialBggOnlyInput"' in html.data
-        assert b'content="9.1.6-bgg-toggle"' in html.data
+        assert b'content="10.0.0-bgg-toggle"' in html.data
         assert 'no-store' in html.headers['Cache-Control']
         js = client.get('/app.js')
         assert js.status_code == 200

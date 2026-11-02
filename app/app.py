@@ -8,13 +8,14 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from io import BytesIO
 
-from . import db, attachments, zip_backup
+from . import db, attachments, zip_backup, bgg
 from .ai_import import import_from_url, import_from_text, import_from_images, search_official_rules
 from .ai_provider import AIProviderError, provider_public_config, provider_status
 from .research_search import search_provider_name as auto_search_provider_name, provider_status as search_provider_status, ResearchSearchError
 from .research_config import get_settings as get_research_settings, save_settings as save_research_settings, reset_settings as reset_research_settings
 from .tags import tag_catalog, normalize_tags
 from .security import parse_allowed_origins
+from .rules_v10 import rules_candidates
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -77,8 +78,8 @@ def create_app(test_config=None):
     @app.route("/api/frontend-build", methods=["GET"])
     def frontend_build():
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        result = jsonify(version="9.1.6", html_contains_bgg_toggle='id="initialBggOnlyInput"' in html,
-                         html_build="9.1.6-bgg-toggle" if 'content="9.1.6-bgg-toggle"' in html else "unbekannt",
+        result = jsonify(version="10.0.0", html_contains_bgg_toggle='id="initialBggOnlyInput"' in html,
+                         html_build="10.0.0-editions-relations" if 'content="10.0.0-editions-relations"' in html else "unbekannt",
                          source="docker-image")
         result.headers["Cache-Control"] = "no-store"
         return result
@@ -122,7 +123,7 @@ def create_app(test_config=None):
             search = {"status": "error", "provider": search_provider, "error": str(exc)}
         return jsonify(
             status="ok",
-            version="9.1.5",
+            version="10.0.0",
             backend={"status": "ok"},
             api={"status": "ok"},
             worker=worker,
@@ -141,10 +142,10 @@ def create_app(test_config=None):
         public_ai = provider_public_config()
         return jsonify(
             title=os.environ.get("APP_TITLE", "Brettspielregal"),
-            version="9.1.5",
+            version="10.0.0",
             app_url=os.environ.get("APP_URL", ""),
             ai_import_enabled=ai_enabled,
-            rules_search_enabled=ai_enabled,
+            rules_search_enabled=bool(ai_enabled or (os.environ.get("SEARXNG_BASE_URL") and os.environ.get("RULE_SEARCH_PROVIDER", "none").lower() == "searxng")),
             auto_enrich_enabled=ai_enabled and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"},
             auto_search_provider=auto_search_provider_name(),
             research_pipeline="v8.8-postfetch-ranked-field-evidence",
@@ -245,7 +246,8 @@ def create_app(test_config=None):
         payload["id"] = str(uuid.uuid4())
         try: game = db.normalize_game(payload)
         except ValueError as exc: return jsonify(error=str(exc)), 400
-        db.save_game(game)
+        try: db.save_game(game)
+        except ValueError as exc: return jsonify(error=str(exc)), 400
         if auto_enrich_requested and os.environ.get("AUTO_ENRICH_ENABLED", "true").lower() in {"1","true","yes","on"} and os.environ.get("AI_IMPORT_ENABLED", "false").lower() in {"1","true","yes","on"}:
             try:
                 db.enqueue_import_job(game["id"], game.get("ean") or game.get("title"), search_scope="initial")
@@ -419,7 +421,8 @@ def create_app(test_config=None):
         try: game = db.normalize_game(payload, existing)
         except ValueError as exc: return jsonify(error=str(exc)), 400
         game["id"] = game_id
-        db.save_game(game)
+        try: db.save_game(game)
+        except ValueError as exc: return jsonify(error=str(exc)), 400
         return jsonify(game)
 
 
@@ -598,6 +601,35 @@ def create_app(test_config=None):
             app.logger.exception("AI/image import failed")
             return jsonify(error="Die Screenshots konnten momentan nicht ausgewertet werden."), 502
 
+
+    @app.route("/api/bgg/relationships/<game_id>", methods=["GET", "OPTIONS"])
+    def bgg_relationships(game_id):
+        if request.method == "OPTIONS": return ("", 204)
+        game = db.get_game(game_id)
+        if not game: return jsonify(error="Spiel nicht gefunden."), 404
+        if not game.get("bgg_id"): return jsonify(error="Bitte zuerst eine BGG-ID eintragen und speichern."), 400
+        try:
+            details = bgg.thing(game["bgg_id"])
+        except bgg.BGGError as exc:
+            return jsonify(error=str(exc)), 503
+        except (ValueError, TypeError):
+            return jsonify(error="BGG-ID ungültig."), 400
+        base_ids = set(details.get("expansion_of_ids") or [])
+        expansion_ids = set(details.get("expansion_ids") or [])
+        own = db.list_games()
+        return jsonify(game_type="expansion" if base_ids else "base",
+                       base_candidates=[{"id":g["id"],"title":g["title"],"bgg_id":g["bgg_id"]} for g in own if g["id"] != game_id and g.get("bgg_id") in base_ids],
+                       expansion_candidates=[{"id":g["id"],"title":g["title"],"bgg_id":g["bgg_id"]} for g in own if g["id"] != game_id and g.get("bgg_id") in expansion_ids],
+                       note="BGG-Beziehungen sind Vorschläge und werden nicht automatisch gespeichert.")
+
+    @app.route("/api/ai/rules-candidates", methods=["POST", "OPTIONS"])
+    def suggested_rules_candidates():
+        if request.method == "OPTIONS": return ("", 204)
+        if os.environ.get("RULE_SEARCH_PROVIDER", "none").strip().lower() != "searxng":
+            return jsonify(error="Bitte RULE_SEARCH_PROVIDER=searxng konfigurieren."), 503
+        payload = request.get_json(silent=True) or {}
+        try: return jsonify(rules_candidates(payload.get("game") or {}))
+        except (ValueError, ResearchSearchError) as exc: return jsonify(error=str(exc)), 400
 
     @app.route("/api/ai/rules-search", methods=["POST", "OPTIONS"])
     def ai_rules_search():

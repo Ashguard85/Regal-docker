@@ -13,7 +13,10 @@ function cleanGame(raw={}){
     id: String(raw.id||id()), title:String(raw.title||"").trim(), description:String(raw.description||"").trim(),
     source_url:String(raw.source_url||"").trim(), rules_url:String(raw.rules_url||"").trim(), rules_text:String(raw.rules_text||"").trim(),
     min_players:num(raw.min_players), max_players:num(raw.max_players), play_time_min:num(raw.play_time_min), min_age:num(raw.min_age),
-    publisher:String(raw.publisher||"").trim(), year:num(raw.year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), bgg_id:num(raw.bgg_id), cover_url:String(raw.cover_url||"").trim(), cover_attachment_id:String(raw.cover_attachment_id||"").trim(), award:String(raw.award||"").trim(), storage_location:String(raw.storage_location||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
+    publisher:String(raw.publisher||"").trim(), year:num(raw.year),
+    game_type:["base","expansion","standalone_expansion","promo","accessory"].includes(raw.game_type)?raw.game_type:"base",
+    base_game_id:String(raw.base_game_id||"").trim(), edition_language:String(raw.edition_language||"").trim(),
+    edition_name:String(raw.edition_name||"").trim(), edition_year:num(raw.edition_year),original_year:num(raw.original_year), designer:String(raw.designer||"").trim(), ean:String(raw.ean||"").trim(), bgg_id:num(raw.bgg_id), cover_url:String(raw.cover_url||"").trim(), cover_attachment_id:String(raw.cover_attachment_id||"").trim(), award:String(raw.award||"").trim(), storage_location:String(raw.storage_location||"").trim(), tags:[...new Set(tags)], notes:String(raw.notes||"").trim(),
     created_at:raw.created_at||nowIso(), updated_at:raw.updated_at||nowIso()
   };
 }
@@ -103,9 +106,22 @@ export class LocalProvider{
     return games;
   }
   async get(id){const g=(await this.list()).find(g=>g.id===id);if(!g)throw new Error("Spiel wurde nicht gefunden.");return g;}
-  async create(data,_options={}){const g=cleanGame(data);g.created_at=g.updated_at=nowIso();await putGame(g);return g;}
-  async update(id,data){const old=await getGame(id);if(!old)throw new Error("Spiel wurde nicht gefunden.");const g=cleanGame({...old,...data,id,created_at:old.created_at,updated_at:nowIso()});await putGame(g);return g;}
-  async remove(id){await deleteGame(id);}
+  async _checkRelation(g){
+    if(!g.base_game_id)return;
+    if(g.base_game_id===g.id)throw new Error("Ein Spiel kann nicht seine eigene Erweiterung sein.");
+    const parent=await getGame(g.base_game_id);
+    if(!parent)throw new Error("Grundspiel existiert nicht in dieser Sammlung.");
+    if(!["base","standalone_expansion"].includes(parent.game_type||"base"))throw new Error("Das gewählte Grundspiel ist selbst eine Erweiterung.");
+    if(!["expansion","standalone_expansion","promo","accessory"].includes(g.game_type))throw new Error("Bitte zuerst einen Erweiterungstyp wählen.");
+    if(parent.base_game_id===g.id)throw new Error("Zirkuläre Erweiterungsverknüpfung.");
+  }
+  async create(data,_options={}){const g=cleanGame(data);await this._checkRelation(g);g.created_at=g.updated_at=nowIso();await putGame(g);return g;}
+  async update(id,data){const old=await getGame(id);if(!old)throw new Error("Spiel wurde nicht gefunden.");const g=cleanGame({...old,...data,id,created_at:old.created_at,updated_at:nowIso()});await this._checkRelation(g);await putGame(g);return g;}
+  async remove(id){
+    const children=(await getAllGames()).filter(g=>g.base_game_id===id);
+    for(const child of children)await putGame({...child,base_game_id:"",updated_at:nowIso()});
+    await deleteGame(id);
+  }
   async listAttachments(gameId){return (await getAllAttachments()).filter(a=>a.game_id===gameId).map(metadata);}
   async addAttachment(gameId,file){
     const game=await getGame(gameId);
@@ -161,7 +177,7 @@ export class LocalProvider{
     await importGamesAndAttachments(games,attachments,strategy);
     return {imported:games.length,attachments:attachments.length,strategy};
   }
-  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"9.1.6",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
+  async config(){return {title:"Brettspielregal",version:window.APP_CONFIG?.version||"10.0.0",ai_import_enabled:false,rules_search_enabled:false,auto_enrich_enabled:false,auto_search_provider:"none",ai_provider:"none",ai_model:"",ai_vision_model:"",rules_search_provider:"none"};}
   async aiFromText(){throw new Error("Vorbereitete KI-Imports sind nur im Server-Modus verfügbar.");}
 }
 
@@ -258,6 +274,8 @@ export class ServerProvider{
     return this.request("/api/ai/from-image",{method:"POST",body:form,timeoutMs:620000});
   }
   searchRules(game){return this.request("/api/ai/rules-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:90000});}
+  rulesCandidates(game){return this.request("/api/ai/rules-candidates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game}),timeoutMs:70000});}
+  bggRelationships(gameId){return this.request(`/api/bgg/relationships/${encodeURIComponent(gameId)}`,{timeoutMs:70000});}
   importQueue(){return this.request("/api/import-queue",{timeoutMs:20000});}
   cleanupImportQueue(mode="history"){return this.request("/api/import-queue/cleanup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode}),timeoutMs:30000});}
   quickCapture(text,storageLocation="",enrich=true){return this.request("/api/import-queue/quick",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,storage_location:storageLocation,enrich:enrich!==false}),timeoutMs:60000});}

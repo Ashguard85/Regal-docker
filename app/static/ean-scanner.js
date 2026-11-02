@@ -1,4 +1,4 @@
-/* Brettspielregal v9.1.6 – lokaler EAN/UPC-Scanner für Safari und andere Browser.
+/* Brettspielregal v10.0.0 – lokaler EAN/UPC-Scanner für Safari und andere Browser.
  * EAN-13 / EAN-8 sind reine Strichmuster. Hier werden ausschließlich lokale
  * Kamerapixel gelesen: keine externen Skripte, Dienste oder Foto-Uploads.
  * Die Prüfziffer ist bei jeder Erkennung zwingend gültig.

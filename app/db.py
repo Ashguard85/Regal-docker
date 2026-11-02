@@ -7,14 +7,14 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 DB_PATH = DATA_DIR / "app.sqlite"
 BACKUP_DIR = DATA_DIR / "backups"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 BACKUP_VERSION = 5
 SUPPORTED_BACKUP_VERSIONS = {1, 2, 3, 4, 5}
 
 GAME_COLUMNS = [
     "id", "title", "description", "source_url", "rules_url", "rules_text",
     "min_players", "max_players", "play_time_min", "min_age", "publisher", "year",
-    "designer", "ean", "bgg_id", "cover_url", "award", "cover_attachment_id", "storage_location", "tags_json", "notes", "created_at", "updated_at"
+    "designer", "ean", "bgg_id", "cover_url", "award", "cover_attachment_id", "storage_location", "tags_json", "notes", "game_type", "base_game_id", "edition_language", "edition_name", "edition_year", "original_year", "created_at", "updated_at"
 ]
 
 
@@ -218,6 +218,23 @@ def init_db():
                 conn.execute("ALTER TABLE import_jobs ADD COLUMN search_scope TEXT NOT NULL DEFAULT 'full'")
             conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (12, utcnow()))
 
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        if 13 not in applied:
+            additions = {
+                "game_type": "TEXT NOT NULL DEFAULT 'base'",
+                "base_game_id": "TEXT NOT NULL DEFAULT ''",
+                "edition_language": "TEXT NOT NULL DEFAULT ''",
+                "edition_name": "TEXT NOT NULL DEFAULT ''",
+                "edition_year": "INTEGER",
+                "original_year": "INTEGER",
+            }
+            existing = _columns(conn, "games")
+            for column, definition in additions.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE games ADD COLUMN {column} {definition}")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_games_base_game_id ON games(base_game_id)")
+            conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?,?)", (13, utcnow()))
+
 
 def get_app_settings(keys=None):
     with connect() as conn:
@@ -300,6 +317,12 @@ def normalize_game(raw, existing=None):
         "cover_attachment_id": _text(raw, existing, "cover_attachment_id", 80),
         "storage_location": _text(raw, existing, "storage_location", 180),
         "tags": tags[:30],
+        "game_type": str(raw.get("game_type", existing.get("game_type", "base")) or "base") if str(raw.get("game_type", existing.get("game_type", "base")) or "base") in {"base", "expansion", "standalone_expansion", "promo", "accessory"} else "base",
+        "base_game_id": _text(raw, existing, "base_game_id", 80),
+        "edition_language": _text(raw, existing, "edition_language", 60),
+        "edition_name": _text(raw, existing, "edition_name", 180),
+        "edition_year": _int_or_none(raw.get("edition_year", existing.get("edition_year")), 1800, 2200),
+        "original_year": _int_or_none(raw.get("original_year", existing.get("original_year")), 1800, 2200),
         "notes": _text(raw, existing, "notes", 6000),
         "created_at": str(existing.get("created_at") or raw.get("created_at") or now),
         "updated_at": str(raw.get("updated_at") or now),
@@ -314,7 +337,7 @@ def row_to_game(row):
         d["tags"] = json.loads(d.pop("tags_json") or "[]")
     except json.JSONDecodeError:
         d["tags"] = []
-    for key in ("designer", "ean", "bgg_id", "cover_url", "award", "cover_attachment_id", "storage_location"):
+    for key in ("designer", "ean", "bgg_id", "cover_url", "award", "cover_attachment_id", "storage_location", "game_type", "base_game_id", "edition_language", "edition_name", "edition_year", "original_year"):
         d.setdefault(key, "")
     return d
 
@@ -397,12 +420,26 @@ def _upsert_game(conn, game):
 
 def save_game(game):
     with connect() as conn:
+        parent = str(game.get("base_game_id") or "")
+        if parent:
+            if parent == game["id"]:
+                raise ValueError("Ein Spiel kann nicht seine eigene Erweiterung sein.")
+            parent_row = conn.execute("SELECT id,base_game_id,game_type FROM games WHERE id=?", (parent,)).fetchone()
+            if not parent_row:
+                raise ValueError("Das zugehörige Grundspiel existiert nicht in deiner Sammlung.")
+            if parent_row["base_game_id"] == game["id"]:
+                raise ValueError("Zirkuläre Erweiterungsverknüpfung ist nicht erlaubt.")
+            if parent_row["game_type"] not in {"base", "standalone_expansion"}:
+                raise ValueError("Das gewählte Grundspiel ist selbst eine Erweiterung.")
+            if game.get("game_type") not in {"expansion", "standalone_expansion", "promo", "accessory"}:
+                raise ValueError("Nur Erweiterungen, Promos oder Zubehör können einem Grundspiel zugeordnet werden.")
         _upsert_game(conn, game)
     return game
 
 
 def delete_game(game_id):
     with connect() as conn:
+        conn.execute("UPDATE games SET base_game_id='' WHERE base_game_id=?", (game_id,))
         cur = conn.execute("DELETE FROM games WHERE id=?", (game_id,))
         return cur.rowcount > 0
 

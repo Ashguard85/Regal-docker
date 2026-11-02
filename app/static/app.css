@@ -721,3 +721,18 @@ code { font-size: .84em; background: #eef0ed; color: #39463f; padding: 2px 5px; 
 #researchSettingsForm > .research-mode-toggle input[type="checkbox"] {appearance:auto; -webkit-appearance:checkbox; width:22px;height:22px; flex-shrink:0;accent-color:#216044}
 #researchSettingsForm > .research-mode-toggle strong {font-size:.98rem;color:#174e35}
 #researchSettingsForm > .research-mode-toggle .hint {font-size:.8rem;line-height:1.5}
+
+/* v10 – Editionen, Beziehungen, Spielauswahl und manuelle SearXNG-Links */
+.game-picker-launch{margin:0 0 12px;min-height:44px;font-weight:750}
+.v10-relation{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.picker-results{margin-top:14px;line-height:1.5}
+.picker-picked{display:grid;gap:7px;padding:16px;border:1px solid var(--border,#d6dcd5);border-radius:14px;background:var(--surface,#fff)}
+.picker-picked strong{font-size:1.15rem}
+.picker-picked span{color:var(--muted,#59675d)}
+.picker-list{display:flex;flex-direction:column;gap:8px;align-items:stretch}
+.picker-list button{text-align:left;white-space:normal}
+.rules-candidates-list{display:grid;gap:12px;max-height:55vh;overflow:auto}
+.rules-candidate{display:grid;gap:7px;padding:12px;border:1px solid var(--border,#d6dcd5);border-radius:12px;overflow-wrap:anywhere}
+.rules-candidate small{font-size:.78rem;color:var(--muted,#59675d)}
+.rules-candidate .button-row{flex-wrap:wrap}
+@media(max-width:500px){.game-picker-launch{width:100%}.rules-candidate .button{flex:1}}

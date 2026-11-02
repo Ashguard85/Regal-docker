@@ -34,7 +34,7 @@ def search_provider_name(kind="rules"):
         legacy_name = "AI_RULE_SEARCH_ENABLED" if kind == "rules" else "AI_IMPORT_WEB_FALLBACK_ENABLED"
         if _env_bool(legacy_name, False):
             value = "openai"
-    if value not in SUPPORTED_SEARCH_PROVIDERS:
+    if value not in (SUPPORTED_SEARCH_PROVIDERS | {"searxng"} if kind == "rules" else SUPPORTED_SEARCH_PROVIDERS):
         raise AIProviderError(f"Unbekannter {env_name}: {value}")
     return value
 

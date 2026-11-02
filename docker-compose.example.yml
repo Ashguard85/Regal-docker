@@ -16,7 +16,7 @@ x-app-environment: &app-environment
   OLLAMA_TIMEOUT_SECONDS: "600"
   AI_MAX_PAGE_CHARS: "16000"
 
-  RULE_SEARCH_PROVIDER: "none"
+  RULE_SEARCH_PROVIDER: "searxng"
   WEB_FALLBACK_PROVIDER: "none"
 
   AUTO_ENRICH_ENABLED: "true"

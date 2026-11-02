@@ -56,7 +56,7 @@ def provider_status():
     try:
         response = requests.get(
             f"{base}/",
-            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/9.1.5"},
+            headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Brettspielregal-Diagnose/10.0.0"},
             timeout=(3, 6), allow_redirects=False,
         )
     except requests.RequestException as exc:
@@ -117,7 +117,7 @@ def searxng_search(query, limit=None, *, language="de", safesearch=0, include_me
                 "safesearch": str(safesearch),
                 "categories": "general",
             },
-            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/9.1.5"},
+            headers={"Accept": "application/json", "User-Agent": "Brettspielregal-Worker/10.0.0"},
             timeout=(4, timeout),
         )
     except requests.RequestException as exc:

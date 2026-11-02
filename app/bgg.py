@@ -87,7 +87,7 @@ def _get(path, params):
                 headers={
                     "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.1",
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": "Brettspielregal/9.1.5 (private self-hosted collection)",
+                    "User-Agent": "Brettspielregal/10.0.0 (private self-hosted collection)",
                 },
                 timeout=(4, _timeout()),
                 allow_redirects=False,
@@ -208,9 +208,19 @@ def thing(item_id):
     thumbnail = (thumb_node.text or "").strip() if thumb_node is not None else ""
     # An inbound boardgameexpansion link usually means this item is an expansion of a base game.
     expansion_of = []
+    expansion_of_ids = []
+    expansions_ids = []
     for node in item.findall("link"):
-        if node.get("type") == "boardgameexpansion" and str(node.get("inbound") or "").lower() in {"true", "1"}:
-            expansion_of.append(str(node.get("value") or "").strip())
+        if node.get("type") == "boardgameexpansion":
+            try:
+                linked_id = int(node.get("id", ""))
+            except (ValueError, TypeError):
+                continue
+            if str(node.get("inbound") or "").lower() in {"true", "1"}:
+                expansion_of.append(str(node.get("value") or "").strip())
+                expansion_of_ids.append(linked_id)
+            else:
+                expansions_ids.append(linked_id)
     return {
         "bgg_id": bgg_id,
         "item_type": str(item.get("type") or "boardgame"),
@@ -230,6 +240,8 @@ def thing(item_id):
         "image": image,
         "thumbnail": thumbnail,
         "expansion_of": [x for x in expansion_of if x][:10],
+        "expansion_of_ids": expansion_of_ids[:30],
+        "expansion_ids": expansions_ids[:100],
         "url": f"{BGG_PUBLIC_BASE}/{bgg_id}",
     }
 
